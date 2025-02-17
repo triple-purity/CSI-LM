@@ -67,7 +67,13 @@ class FlattenHead(nn.Module):
 
 class Model(nn.Module):
 
-    def __init__(self, configs, patch_len=16, stride=8):
+    def __init__(self,
+                 configs,
+                 seq_len,
+                 llm_model_name,
+                 patch_len=16, 
+                 stride=8
+                ):
         super(Model, self).__init__()
         self.task_name = configs.task_name
         self.pred_len = configs.pred_len
@@ -78,6 +84,48 @@ class Model(nn.Module):
         self.patch_len = configs.patch_len
         self.stride = configs.stride
 
+        # Load LLM Model
+        self.load_llm(configs)
+
+        if self.tokenizer.eos_token:
+            self.tokenizer.pad_token = self.tokenizer.eos_token
+        else:
+            pad_token = '[PAD]'
+            self.tokenizer.add_special_tokens({'pad_token': pad_token})
+            self.tokenizer.pad_token = pad_token
+
+        for param in self.llm_model.parameters():
+            param.requires_grad = False
+
+        if configs.prompt_domain:
+            self.description = configs.content
+        else:
+            self.description = 'The Electricity Transformer Temperature (ETT) is a crucial indicator in the electric power long-term deployment.'
+
+        self.dropout = nn.Dropout(configs.dropout)
+
+        self.patch_embedding = PatchEmbedding(
+            configs.d_model, self.patch_len, self.stride, configs.dropout)
+
+        self.word_embeddings = self.llm_model.get_input_embeddings().weight
+        self.vocab_size = self.word_embeddings.shape[0]
+        self.num_tokens = 1000
+        self.mapping_layer = nn.Linear(self.vocab_size, self.num_tokens)
+
+        self.reprogramming_layer = ReprogrammingLayer(configs.d_model, configs.n_heads, self.d_ff, self.d_llm)
+
+        self.patch_nums = int((configs.seq_len - self.patch_len) / self.stride + 2)
+        self.head_nf = self.d_ff * self.patch_nums
+
+        if self.task_name == 'long_term_forecast' or self.task_name == 'short_term_forecast':
+            self.output_projection = FlattenHead(configs.enc_in, self.head_nf, self.pred_len,
+                                                 head_dropout=configs.dropout)
+        else:
+            raise NotImplementedError
+
+        self.normalize_layers = Normalize(configs.enc_in, affine=False)
+
+    def load_llm(self, configs):
         if configs.llm_model == 'LLAMA':
             # self.llama_config = LlamaConfig.from_pretrained('/mnt/alps/modelhub/pretrained_model/LLaMA/7B_hf/')
             self.llama_config = LlamaConfig.from_pretrained('huggyllama/llama-7b')
@@ -190,44 +238,6 @@ class Model(nn.Module):
                 )
         else:
             raise Exception('LLM model is not defined')
-
-        if self.tokenizer.eos_token:
-            self.tokenizer.pad_token = self.tokenizer.eos_token
-        else:
-            pad_token = '[PAD]'
-            self.tokenizer.add_special_tokens({'pad_token': pad_token})
-            self.tokenizer.pad_token = pad_token
-
-        for param in self.llm_model.parameters():
-            param.requires_grad = False
-
-        if configs.prompt_domain:
-            self.description = configs.content
-        else:
-            self.description = 'The Electricity Transformer Temperature (ETT) is a crucial indicator in the electric power long-term deployment.'
-
-        self.dropout = nn.Dropout(configs.dropout)
-
-        self.patch_embedding = PatchEmbedding(
-            configs.d_model, self.patch_len, self.stride, configs.dropout)
-
-        self.word_embeddings = self.llm_model.get_input_embeddings().weight
-        self.vocab_size = self.word_embeddings.shape[0]
-        self.num_tokens = 1000
-        self.mapping_layer = nn.Linear(self.vocab_size, self.num_tokens)
-
-        self.reprogramming_layer = ReprogrammingLayer(configs.d_model, configs.n_heads, self.d_ff, self.d_llm)
-
-        self.patch_nums = int((configs.seq_len - self.patch_len) / self.stride + 2)
-        self.head_nf = self.d_ff * self.patch_nums
-
-        if self.task_name == 'long_term_forecast' or self.task_name == 'short_term_forecast':
-            self.output_projection = FlattenHead(configs.enc_in, self.head_nf, self.pred_len,
-                                                 head_dropout=configs.dropout)
-        else:
-            raise NotImplementedError
-
-        self.normalize_layers = Normalize(configs.enc_in, affine=False)
 
     def forward(self, x_enc, x_mark_enc, x_dec, x_mark_dec, mask=None):
         if self.task_name == 'long_term_forecast' or self.task_name == 'short_term_forecast':

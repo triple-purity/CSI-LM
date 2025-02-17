@@ -30,7 +30,6 @@ class TokenEmbedding(nn.Module):
         super(TokenEmbedding, self).__init__()
         padding = (kernel-1)//2
         # Local Time Series Attention
-
         self.tokenConv = nn.Conv1d(in_channels=c_in, out_channels=c_out,
                                    kernel_size=3, padding=padding, padding_mode='circular', 
                                    bias=False)
@@ -45,7 +44,7 @@ class TokenEmbedding(nn.Module):
     
 
 class PatchEmbedding(nn.Module):
-    def __init__(self, in_ch, d_model, patch_len, patch_stride, dropout=0.):
+    def __init__(self, d_model, patch_len, patch_stride, dropout=0.):
         super(PatchEmbedding, self).__init__()
         # Patching
         self.patch_len = patch_len
@@ -53,7 +52,7 @@ class PatchEmbedding(nn.Module):
         self.padding_patch_layer = nn.ReplicationPad1d((0, patch_stride))
 
         # Backbone, Input encoding: projection of feature vectors onto a d-dim vector space
-        self.value_embedding = nn.Conv2d(in_ch, d_model, kernel_size=5, stride=2, padding=2, bias=False)
+        self.value_embedding = TokenEmbedding(patch_len, d_model)
 
         # Residual dropout
         self.dropout = nn.Dropout(dropout)
@@ -70,10 +69,9 @@ class PatchEmbedding(nn.Module):
     def forward(self, x):
         # do patching
         n_vars = x.shape[1]
-        # x = self.padding_patch_layer(x)
+        x = self.padding_patch_layer(x)
         x = x.unfold(dimension=-1, size=self.patch_len, step=self.patch_len)
-        # x = torch.reshape(x, (x.shape[0] * x.shape[1], x.shape[2], x.shape[3]))
+        x = torch.reshape(x, (x.shape[0] * x.shape[1], x.shape[2], x.shape[3]))
         # Input encoding
         output = self.value_embedding(x)
-        output = output.flatten(-2).permute(0,2,1)
         return output, n_vars

@@ -12,7 +12,7 @@ from torch.optim.lr_scheduler import LambdaLR
 from torch.utils.data import DataLoader
 
 from dataset.datasets import CSI_Dataset, DFS_Dataset, BVP_Dataset
-from model.GPT2_Base import GPT2FCLS, build_GPT2FCLS
+from model.LLM_Weight_Fintue.GPT2_Base import GPT2FCLS, build_GPT2FCLS
 
 from tqdm.auto import tqdm
 from dataset.data import get_csi_data, get_dfs_data, get_bvp_data
