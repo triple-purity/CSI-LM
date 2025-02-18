@@ -123,7 +123,7 @@ class Model(nn.Module):
         else:
             raise NotImplementedError
 
-        self.normalize_layers = Normalize(configs.enc_in, affine=False)
+        # self.normalize_layers = Normalize(configs.enc_in, affine=False)
 
     def load_llm(self, configs):
         if configs.llm_model == 'LLAMA':
