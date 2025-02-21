@@ -169,12 +169,12 @@ class LLM2Rec(nn.Module):
 
         # 5.Classifier Head
         self.head_for_class_TS = nn.Sequential(
-            nn.Linear(d_model, num_classes),
+            nn.Linear(self.d_llm, num_classes),
             nn.Dropout(dropout),
         )
         
         self.head_for_class_ST = nn.Sequential(
-            nn.Linear(d_model, num_classes),
+            nn.Linear(self.d_llm, num_classes),
             nn.Dropout(dropout),
         )
 
@@ -270,10 +270,12 @@ def build_LLM2Rec(
         token_kernel=3,
         reduce_ratio = 1,
         patch_len = 20,
-        n_heads=8,  
+        n_heads=8,
+        llm_layers=12,  
         start_layer=0,
         frozen_llm_layer=8,
-        batch_seq_len=2000, 
+        batch_seq_len=2000,
+        lora=True, 
     ):
     model = LLM2Rec(
             num_classes=num_classes,
@@ -284,11 +286,13 @@ def build_LLM2Rec(
             reduce_ratio = reduce_ratio,
             patch_len = patch_len,
             n_heads=n_heads,
+            llm_layers=llm_layers,
             frozen_llm_layer=frozen_llm_layer,
             batch_seq_len=batch_seq_len,
         )
     model.frozen_llm(start_layer)
-    model.llm_lora()
+    if lora:
+        model.llm_lora()
     return model
 
 
