@@ -197,7 +197,7 @@ class LLM2Rec(nn.Module):
             r=lora_r,
             lora_alpha=lora_alpha,
             target_modules=target_modules,
-            lora_dropout=lora_config,
+            lora_dropout=0.05,
             bias="none",
         )
 
