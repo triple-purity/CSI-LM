@@ -168,9 +168,9 @@ def main():
         patch_len=args.patch_len,
         reduce_ratio=args.reduce_ratio,
         n_heads=args.n_heads,
-        llm_layers=args.gpt2_trans_layers,
+        llm_layers=args.llm_layers,
         start_layer=args.start_layer,
-        frozen_llm_layer=args.frozen_gpt2_layer,
+        frozen_llm_layer=args.frozen_llm_layer,
         batch_seq_len=args.time_length,
     )
     
