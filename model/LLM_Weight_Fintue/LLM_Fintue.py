@@ -61,7 +61,7 @@ class MultiHeadAttention(nn.Module):
 # 2. ReprogrammingLayer
 # To transform the target embedding into the same dimension as the source embedding
 class ReprogrammingLayer(nn.Module):
-    def __init__(self, d_model, n_heads, d_keys=None, d_llm=None, attention_dropout=0.1):
+    def __init__(self, d_model, n_heads, d_llm, d_keys=None, attention_dropout=0.1):
         super(ReprogrammingLayer, self).__init__()
 
         d_keys = d_keys or (d_model // n_heads)
@@ -140,7 +140,7 @@ class LLM2Rec(nn.Module):
                           kernel_size=reduce_ratio, stride=reduce_ratio, 
                           bias=True),
                 nn.BatchNorm1d(reduce_dim),
-                nn.ReLU(),
+                nn.SiLU(inplace=True),
             )
         # token_embedding is used for [B,T,C]
         self.token_embedding = TokenEmbedding(
@@ -158,7 +158,14 @@ class LLM2Rec(nn.Module):
         # 3. Load LLM
         self.load_LLM()
 
-        # 4.classifier head
+        # 4. Reprogramming Layer
+        self.word_embeddings = self.llm_model.get_input_embeddings().weight # 获得权重
+        self.vocab_size = self.word_embeddings.shape[0] # 获得词表大小
+        self.num_tokens = 1000 
+        self.mapping_layer = nn.Linear(self.vocab_size, self.num_tokens)
+        self.reprogramming_layer = ReprogrammingLayer(self.d_model, configs.n_heads, self.d_ff, self.d_llm)
+
+        # 5.Classifier Head
         self.head_for_class_TS = nn.Sequential(
             nn.Linear(d_model, num_classes),
             nn.Dropout(dropout),
@@ -180,6 +187,8 @@ class LLM2Rec(nn.Module):
             self.llm_model = Qwen2Model.from_pretrained(self.llm_name)
         else:
             raise Exception('LLM model is not defined')
+        
+        self.d_llm = self.llm_config.hidden_size
     
     def llm_lora(self, lora_r=8, lora_alpha=32, target_modules=["q_proj", "v_proj"], lora_dropout=0.05):
         lora_config = LoraConfig(
@@ -192,18 +201,22 @@ class LLM2Rec(nn.Module):
 
         self.llm_model = get_peft_model(self.llm_model, lora_config)
 
-    def frozen_llm(self, start_layer: int = 0):
+    def frozen_llm(self, start_layer:int = 0, frozen_blocks=['self_attn', 'mlp']):
         end_layer = start_layer + self.frozen_llm_layer
         assert end_layer <= self.llm_layers, "frozen layer should be less than total layer"
 
         for i, layer in enumerate(self.llm_model.layers):
             if i >= start_layer and i < end_layer:
                 for name, param in layer.named_parameters():
-                    param.requires_grad = False
+                    if name.split('.')[0] in frozen_blocks:
+                        param.requires_grad = False
 
     def forward(self, x, mode='TS'):
         assert mode in ['TS', 'ST'], "mode should be TS or ST"
         B, T, C = x.shape
+
+        # 1. Repogramming Layer
+        source_embeddings = self.mapping_layer(self.word_embeddings.permute(1, 0)).permute(1, 0)
 
         if mode == 'TS':
             if self.is_reduce_time:
@@ -214,8 +227,10 @@ class LLM2Rec(nn.Module):
             x = self.token_embedding(x)
             x = torch.cat((self.start_token.expand(B, 1, -1), x), dim=1)
             x = torch.cat((x, self.stop_token.expand(B, 1, -1)), dim=1)
+            x = self.reprogramming_layer(x, source_embeddings, source_embeddings)
 
             outputs = self.llm_model(inputs_embeds=x).last_hidden_state
+
 
             outputs = outputs[:,-1]
             outputs = self.head_for_class_TS(outputs)
