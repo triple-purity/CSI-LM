@@ -108,10 +108,11 @@ class LLM2Rec(nn.Module):
                  num_classes,
                  llm_name,
                  d_model,
+                 input_dim = 90,
                  token_kernel=3,
                  reduce_ratio = 1,
-                 input_dim = 90,
-                 patch_len = 20, 
+                 patch_len = 20,
+                 n_heads = 8, 
                  llm_layers=12,
                  frozen_llm_layer=8,
                  batch_seq_len=2000, 
@@ -121,15 +122,16 @@ class LLM2Rec(nn.Module):
         # LLM Configs
         self.llm_name = llm_name
         self.llm_layers = llm_layers
-        self.d_model = d_model
         self.frozen_llm_layer = frozen_llm_layer
         # CSI 
         self.num_classes = num_classes
         self.seq_len = batch_seq_len
         self.input_dim = input_dim
+        self.d_model = d_model
         
         self.patch_len = patch_len
         self.reduce_ratio = reduce_ratio
+        self.n_heads = n_heads
 
         # 1. CSI Process
         self.is_reduce_time = reduce_ratio != 1
@@ -149,7 +151,7 @@ class LLM2Rec(nn.Module):
             kernel=token_kernel
         )
         # patch_embedding is used for [B,C,T]
-        self.patch_embedding = PatchEmbedding(input_dim, d_model, patch_len=patch_len, patch_stride=patch_len)
+        self.patch_embedding = PatchEmbedding(d_model, patch_len=patch_len, patch_stride=patch_len)
 
         # 2. Add Extral token
         self.start_token = nn.Parameter(torch.zeros(1, 1, d_model), requires_grad=True)
@@ -163,7 +165,7 @@ class LLM2Rec(nn.Module):
         self.vocab_size = self.word_embeddings.shape[0] # 获得词表大小
         self.num_tokens = 1000 
         self.mapping_layer = nn.Linear(self.vocab_size, self.num_tokens)
-        self.reprogramming_layer = ReprogrammingLayer(self.d_model, configs.n_heads, self.d_ff, self.d_llm)
+        self.reprogramming_layer = ReprogrammingLayer(self.d_model, self.n_heads, self.d_llm)
 
         # 5.Classifier Head
         self.head_for_class_TS = nn.Sequential(
@@ -231,7 +233,6 @@ class LLM2Rec(nn.Module):
 
             outputs = self.llm_model(inputs_embeds=x).last_hidden_state
 
-
             outputs = outputs[:,-1]
             outputs = self.head_for_class_TS(outputs)
             return outputs
@@ -265,25 +266,25 @@ def build_LLM2Rec(
         num_classes,
         llm_name, 
         d_model,
+        input_dim = 90,
         token_kernel=3,
         reduce_ratio = 1,
-        input_dim = 90,
-        patch_len = 20,  
-        gpt_trans_layer=12,
+        patch_len = 20,
+        n_heads=8,  
         start_layer=0,
-        frozen_gpt2_layer=8,
+        frozen_llm_layer=8,
         batch_seq_len=2000, 
     ):
     model = LLM2Rec(
             num_classes=num_classes,
             llm_name=llm_name,
             d_model=d_model,
-            token_kernel=token_kernel,
             input_dim=input_dim,
+            token_kernel=token_kernel,
             reduce_ratio = reduce_ratio,
             patch_len = patch_len,
-            gpt_trans_layer=gpt_trans_layer,
-            frozen_gpt2_layer=frozen_gpt2_layer,
+            n_heads=n_heads,
+            frozen_llm_layer=frozen_llm_layer,
             batch_seq_len=batch_seq_len,
         )
     model.frozen_llm(start_layer)
