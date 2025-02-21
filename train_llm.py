@@ -36,7 +36,7 @@ def get_args_parser():
 
     # create model params
     parser.add_argument('--num_classes', default=2, type=int)
-    parser.add_argument('--model_name', default='unsloth/Qwen2.5-3B', type=str)
+    parser.add_argument('--llm_name', default='unsloth/Qwen2.5-3B', type=str)
     parser.add_argument('--d_model', default=1024, type=int)
     parser.add_argument('--input_dim', default=90, type=int)
     parser.add_argument('--token_kernel', default=3, type=int)
