@@ -287,8 +287,8 @@ class LLM2Rec(nn.Module):
             outputs = self.head_for_class_ST(outputs)
             return outputs
     
-    def predict(self, x, mode='TS'):
-        x_logits = self.forward(x, mode=mode)
+    def predict(self, x, mode='TS', reprogramming=False):
+        x_logits = self.forward(x, mode=mode, reprogramming=reprogramming)
         pre_labels = torch.argmax(x_logits, dim=1)
         return x_logits, pre_labels
 
