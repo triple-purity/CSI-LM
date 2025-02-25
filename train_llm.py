@@ -12,7 +12,7 @@ from torch.optim.lr_scheduler import LambdaLR
 from torch.utils.data import DataLoader
 
 from dataset.datasets import CSI_Dataset, DFS_Dataset, BVP_Dataset
-from model.LLM_Weight_Fintue.LLM_Fintue import LLM2Rec, build_LLM2Rec
+from model.LLM_Fintue import LLM2Rec, build_LLM2Rec
 
 from tqdm.auto import tqdm
 from dataset.data import get_csi_data, get_dfs_data, get_bvp_data
@@ -46,6 +46,7 @@ def get_args_parser():
     parser.add_argument('--llm_layers', default=12, type=int)
     parser.add_argument('--start_layer', default=0, type=int)
     parser.add_argument('--frozen_llm_layer', default=8, type=int)
+    parser.add_argument('--lora', default=False, type=bool)
     parser.add_argument('--forward_mode', default='ST', type=str, help='ST or TS')
 
     #train model params

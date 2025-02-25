@@ -45,19 +45,19 @@ class CNN_MaxPool(nn.Module):
 
 class CLIPFCLS(nn.Module):
     def __init__(self, 
-                 num_classes = 2, 
-                 time_length = 2000,
-                 token_kernel = 3,
+                 num_classes, 
                  input_dim = 90, 
+                 token_kernel = 3,
                  reduce_ratio = 1,
                  transformer_width = 512,
                  transformer_layers = 12,
                  transformer_heads = 8,
+                 batch_seq_len = 2000,
                  init_model_name = "ViT-B/32", 
                 ):
         super(CLIPFCLS, self).__init__()
         self.num_classes = num_classes
-        self.time_length = time_length
+        self.time_length = batch_seq_len
         self.input_dim = input_dim
         self.init_model_name = init_model_name
 

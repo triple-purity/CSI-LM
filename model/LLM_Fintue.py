@@ -10,13 +10,15 @@ from torch import optim
 from transformers import BertTokenizer, BertModel
 from transformers import LlamaModel, LlamaConfig
 from transformers import Qwen2Model, Qwen2Config
+from transformers import GPT2Model, GPT2Config
 
 from peft import get_peft_model, LoraConfig
 
 from einops import rearrange
 from model.embed import TokenEmbedding, PositionalEmbedding, PatchEmbedding
 
-use_llm_names = ['unsloth/llama-3-8B', 'unsloth/Qwen2.5-3B']
+llama_names = ['unsloth/Llama-3.2-1B', 'Qwen/Qwen2.5-1.5B']
+gpt_names = ['openai-community/gpt2', 'openai-community/gpt2-medium']
 
 # 1. Attention Block as Transformer Encoder
 class MultiHeadAttention(nn.Module):
@@ -179,19 +181,28 @@ class LLM2Rec(nn.Module):
         )
 
     def load_LLM(self):
-        if self.llm_name == 'unsloth/Llama-3.2-3B':
+        assert self.llm_name in llama_names or self.llm_name in gpt_names, f"LLM model {self.llm_name} is not defined"
+
+        if self.llm_name == 'unsloth/Llama-3.2-1B':
             self.llm_config = LlamaConfig.from_pretrained(self.llm_name)
             self.llm_config.num_hidden_layers = self.llm_layers
             self.llm_model = LlamaModel.from_pretrained(self.llm_name, config=self.llm_config)
-        elif self.llm_name == 'unsloth/Qwen2.5-3B':
+            self.d_llm = self.llm_config.hidden_size
+        elif self.llm_name == 'Qwen/Qwen2.5-1.5B':
             self.llm_config = Qwen2Config.from_pretrained(self.llm_name)
             self.llm_config.num_hidden_layers = self.llm_layers
             self.llm_model = Qwen2Model.from_pretrained(self.llm_name)
+            self.d_llm = self.llm_config.hidden_size
+        elif self.llm_name == 'openai-community/gpt2':
+            self.llm_config = GPT2Config.from_pretrained(self.llm_name)
+            self.llm_config.n_layer = self.llm_layers
+            self.llm_model = GPT2Model.from_pretrained(self.llm_name, config=self.llm_config)
+            self.d_llm = self.llm_config.n_embd
         else:
             raise Exception('LLM model is not defined')
         
-        self.d_llm = self.llm_config.hidden_size
     
+        
     def llm_lora(self, lora_r=8, lora_alpha=32, target_modules=["q_proj", "v_proj"], lora_dropout=0.05):
         lora_config = LoraConfig(
             r=lora_r,
@@ -203,7 +214,7 @@ class LLM2Rec(nn.Module):
 
         self.llm_model = get_peft_model(self.llm_model, lora_config)
 
-    def frozen_llm(self, start_layer:int = 0, frozen_blocks=['self_attn', 'mlp']):
+    def frozen_llama(self, start_layer:int = 0, frozen_blocks=['self_attn', 'mlp']):
         end_layer = start_layer + self.frozen_llm_layer
         assert end_layer <= self.llm_layers, "frozen layer should be less than total layer"
 
@@ -212,6 +223,25 @@ class LLM2Rec(nn.Module):
                 for name, param in layer.named_parameters():
                     if name.split('.')[0] in frozen_blocks:
                         param.requires_grad = False
+            else:
+                break
+    
+    def frozen_gpt2(self, start_layer: int = 0):
+        end_layer = start_layer + self.frozen_llm_layer
+        assert end_layer <= self.llm_layers, "frozen layer should be less than total layer"
+        
+        for param in self.llm_model.wpe.parameters():
+            param.requires_grad = True
+
+        for i, layer in enumerate(self.gpt2.h):
+            if i < end_layer and i >= start_layer:
+                for i, (name, param) in enumerate(layer.named_parameters()):
+                    if 'ln' in name:
+                        param.requires_grad = True
+                    else:
+                        param.requires_grad = False
+            else:
+                break
 
     def forward(self, x, mode='TS'):
         assert mode in ['TS', 'ST'], "mode should be TS or ST"
@@ -273,9 +303,9 @@ def build_LLM2Rec(
         n_heads=8,
         llm_layers=12,  
         start_layer=0,
-        frozen_llm_layer=8,
+        frozen_llm_layer=10,
         batch_seq_len=2000,
-        lora=True, 
+        lora=False, 
     ):
     model = LLM2Rec(
             num_classes=num_classes,
@@ -290,8 +320,12 @@ def build_LLM2Rec(
             frozen_llm_layer=frozen_llm_layer,
             batch_seq_len=batch_seq_len,
         )
-    model.frozen_llm(start_layer)
-    if lora:
+    if llm_name in llama_names:
+        model.frozen_llama(start_layer)
+    else:
+        model.frozen_gpt2(start_layer)
+
+    if llm_name in llama_names and lora:
         model.llm_lora()
     return model
 
