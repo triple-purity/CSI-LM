@@ -143,7 +143,7 @@ class LLM2Rec(nn.Module):
                           kernel_size=reduce_ratio, stride=reduce_ratio, 
                           bias=True),
                 nn.BatchNorm1d(reduce_dim),
-                nn.SiLU(inplace=True),
+                nn.ReLU(inplace=True),
             )
         # token_embedding is used for [B,T,C]
         self.token_embedding = TokenEmbedding(
@@ -171,6 +171,8 @@ class LLM2Rec(nn.Module):
 
         # 5.Classifier Head
         self.head_for_class_TS = nn.Sequential(
+            nn.Linear(self.d_llm, self.d_llm),
+            nn.ReLU(inplace=True),
             nn.Linear(self.d_llm, num_classes),
             nn.Dropout(dropout),
         )
