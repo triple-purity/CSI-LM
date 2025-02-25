@@ -31,7 +31,7 @@ class TokenEmbedding(nn.Module):
         padding = (kernel-1)//2
         # Local Time Series Attention
         self.tokenConv = nn.Conv1d(in_channels=c_in, out_channels=c_out,
-                                   kernel_size=3, padding=padding, padding_mode='circular', 
+                                   kernel_size=kernel, padding=padding, padding_mode='circular', 
                                    bias=False)
         for m in self.modules():
             if isinstance(m, nn.Conv1d):
