@@ -133,7 +133,6 @@ class LLM2Rec(nn.Module):
         self.patch_len = patch_len
         self.reduce_ratio = reduce_ratio
         self.n_heads = n_heads
-        self.d_keys = d_keys
 
         # 1. CSI Process
         self.is_reduce_time = reduce_ratio != 1
