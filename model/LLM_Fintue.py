@@ -163,6 +163,7 @@ class LLM2Rec(nn.Module):
 
         # 4. Reprogramming Layer
         self.word_embeddings = self.llm_model.get_input_embeddings().weight # 获得权重
+        self.word_embeddings.requires_grad = False
         self.vocab_size = self.word_embeddings.shape[0] # 获得词表大小
         self.num_tokens = 1000 
         self.mapping_layer = nn.Linear(self.vocab_size, self.num_tokens)

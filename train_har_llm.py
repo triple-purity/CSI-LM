@@ -112,7 +112,7 @@ def eval_model(model, eval_data, loss_fun, device, args):
             inputs = inputs.to(device)
             labels = labels.to(device)
             
-            pre_logits, pre_labels = model.predict(inputs, args.forward_mode, args.reprogrammming)
+            pre_logits, pre_labels = model.predict(inputs, args.forward_mode, args.reprogramming)
             eval_loss = loss_fun(pre_logits, labels)
             eval_avg_loss = (eval_avg_loss * i + eval_loss.item())/(i+1)
 
