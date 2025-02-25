@@ -113,7 +113,7 @@ class LLM2Rec(nn.Module):
                  token_kernel=3,
                  reduce_ratio = 1,
                  patch_len = 20,
-                 n_heads = 8, 
+                 n_heads = 8,
                  llm_layers=12,
                  frozen_llm_layer=8,
                  batch_seq_len=2000, 
@@ -133,6 +133,7 @@ class LLM2Rec(nn.Module):
         self.patch_len = patch_len
         self.reduce_ratio = reduce_ratio
         self.n_heads = n_heads
+        self.d_keys = d_keys
 
         # 1. CSI Process
         self.is_reduce_time = reduce_ratio != 1
@@ -152,7 +153,7 @@ class LLM2Rec(nn.Module):
             kernel=token_kernel
         )
         # patch_embedding is used for [B,C,T]
-        self.patch_embedding = PatchEmbedding(d_model, patch_len=patch_len, patch_stride=patch_len)
+        self.patch_embedding = PatchEmbedding(d_model, patch_len=patch_len, patch_stride=patch_len//2)
 
         # 2. Add Extral token
         self.start_token = nn.Parameter(torch.zeros(1, 1, d_model), requires_grad=True)
@@ -162,6 +163,7 @@ class LLM2Rec(nn.Module):
         self.load_LLM()
 
         # 4. Reprogramming Layer
+        self.gate_proj = nn.Linear(d_model, 1)
         self.word_embeddings = self.llm_model.get_input_embeddings().weight # 获得权重
         self.word_embeddings.requires_grad = False
         self.vocab_size = self.word_embeddings.shape[0] # 获得词表大小
@@ -258,12 +260,18 @@ class LLM2Rec(nn.Module):
                 x = self.conv_reduce(x)
                 x = x.permute(0, 2, 1)
 
-            x = self.token_embedding(x)
-            # x = torch.cat((self.start_token.expand(B, 1, -1), x), dim=1)
-            x = torch.cat((x, self.stop_token.expand(B, 1, -1)), dim=1)
-            if reprogramming:
+            if reprogramming:    
+                x = x.permute(0, 2, 1)
+                x, n_vars = self.patch_embedding(x)
+                x = x.view(B, n_vars, -1, self.d_model)
+                x = x.permute(0, 2, 1, 3).contiguous()
+                x = torch.sum(x*self.gate_proj(x), dim=-2)
                 x = self.reprogramming_layer(x, source_embeddings, source_embeddings)
-
+            else:
+                x = self.token_embedding(x)
+                # x = torch.cat((self.start_token.expand(B, 1, -1), x), dim=1)
+                x = torch.cat((x, self.stop_token.expand(B, 1, -1)), dim=1)
+            
             outputs = self.llm_model(inputs_embeds=x).last_hidden_state
 
             outputs = outputs[:,-1]
