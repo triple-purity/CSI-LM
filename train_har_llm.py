@@ -41,6 +41,7 @@ def get_args_parser():
     parser.add_argument('--llm_layers', default=12, type=int)
     parser.add_argument('--start_layer', default=0, type=int)
     parser.add_argument('--frozen_llm_layer', default=8, type=int)
+    parser.add_argument('--reprogramming', default=False, type=bool)
     parser.add_argument('--forward_mode', default='ST', type=str, help='ST or TS')
 
     #train model params
@@ -68,7 +69,7 @@ def train_model(model, train_data, start_epoch, epochs, optimizer, scheduler,
             inputs = inputs.to(device)
             labels = labels.to(device)
 
-            pred_logits = model(inputs, args.forward_mode)
+            pred_logits = model(inputs, args.forward_mode, args.reprogramming)
             
             loss = loss_fn(pred_logits, labels)
 
@@ -111,7 +112,7 @@ def eval_model(model, eval_data, loss_fun, device, args):
             inputs = inputs.to(device)
             labels = labels.to(device)
             
-            pre_logits, pre_labels = model.predict(inputs, args.forward_mode)
+            pre_logits, pre_labels = model.predict(inputs, args.forward_mode, args.reprogrammming)
             eval_loss = loss_fun(pre_logits, labels)
             eval_avg_loss = (eval_avg_loss * i + eval_loss.item())/(i+1)
 

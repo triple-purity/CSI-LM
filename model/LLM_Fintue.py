@@ -243,7 +243,7 @@ class LLM2Rec(nn.Module):
             else:
                 break
 
-    def forward(self, x, mode='TS'):
+    def forward(self, x, mode='TS', reprogramming=False):
         assert mode in ['TS', 'ST'], "mode should be TS or ST"
         B, T, C = x.shape
 
@@ -257,9 +257,10 @@ class LLM2Rec(nn.Module):
                 x = x.permute(0, 2, 1)
 
             x = self.token_embedding(x)
-            x = torch.cat((self.start_token.expand(B, 1, -1), x), dim=1)
-            x = torch.cat((x, self.stop_token.expand(B, 1, -1)), dim=1)
-            x = self.reprogramming_layer(x, source_embeddings, source_embeddings)
+            # x = torch.cat((self.start_token.expand(B, 1, -1), x), dim=1)
+            # x = torch.cat((x, self.stop_token.expand(B, 1, -1)), dim=1)
+            if reprogramming:
+                x = self.reprogramming_layer(x, source_embeddings, source_embeddings)
 
             outputs = self.llm_model(inputs_embeds=x).last_hidden_state
 
