@@ -162,9 +162,12 @@ class LLM2Rec(nn.Module):
         self.load_LLM()
 
         # 4. Reprogramming Layer
-        self.gate_proj = nn.Linear(d_model, 1)
+        self.up_proj = nn.Linear(d_model, 2*d_model)
+        self.gate_proj = nn.Linear(d_model, 2*d_model)
+        self.down_proj = nn.Linear(2*d_model, d_model)
+
         self.word_embeddings = self.llm_model.get_input_embeddings().weight # 获得权重
-        self.word_embeddings.requires_grad = False
+        # self.word_embeddings.requires_grad = False
         self.vocab_size = self.word_embeddings.shape[0] # 获得词表大小
         self.num_tokens = 1000 
         self.mapping_layer = nn.Linear(self.vocab_size, self.num_tokens)
@@ -203,8 +206,6 @@ class LLM2Rec(nn.Module):
             self.d_llm = self.llm_config.n_embd
         else:
             raise Exception('LLM model is not defined')
-        
-    
         
     def llm_lora(self, lora_r=8, lora_alpha=32, target_modules=["q_proj", "v_proj"], lora_dropout=0.05):
         lora_config = LoraConfig(
@@ -259,18 +260,13 @@ class LLM2Rec(nn.Module):
                 x = self.conv_reduce(x)
                 x = x.permute(0, 2, 1)
 
+            x = self.token_embedding(x)
+            # x = torch.cat((self.start_token.expand(B, 1, -1), x), dim=1)
             if reprogramming:    
-                x = x.permute(0, 2, 1)
-                x, n_vars = self.patch_embedding(x)
-                x = x.view(B, n_vars, -1, self.d_model)
-                x = x.permute(0, 2, 1, 3).contiguous()
-                x = torch.sum(x*self.gate_proj(x), dim=-2)
+                x = self.down_proj(self.gate_proj(x)*self.up_proj(x))
                 x = self.reprogramming_layer(x, source_embeddings, source_embeddings)
-            else:
-                x = self.token_embedding(x)
-                # x = torch.cat((self.start_token.expand(B, 1, -1), x), dim=1)
-                x = torch.cat((x, self.stop_token.expand(B, 1, -1)), dim=1)
-            
+            x = torch.cat((x, self.stop_token.expand(B, 1, -1)), dim=1)
+
             outputs = self.llm_model(inputs_embeds=x).last_hidden_state
 
             outputs = outputs[:,-1]
