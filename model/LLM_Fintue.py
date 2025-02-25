@@ -258,7 +258,7 @@ class LLM2Rec(nn.Module):
 
             x = self.token_embedding(x)
             # x = torch.cat((self.start_token.expand(B, 1, -1), x), dim=1)
-            # x = torch.cat((x, self.stop_token.expand(B, 1, -1)), dim=1)
+            x = torch.cat((x, self.stop_token.expand(B, 1, -1)), dim=1)
             if reprogramming:
                 x = self.reprogramming_layer(x, source_embeddings, source_embeddings)
 
