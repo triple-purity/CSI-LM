@@ -36,7 +36,7 @@ def get_args_parser():
 
     # create model params
     parser.add_argument('--num_classes', default=2, type=int)
-    parser.add_argument('--llm_name', default='unsloth/Qwen2.5-3B', type=str)
+    parser.add_argument('--llm_name', default='unsloth/Qwen2.5-1.5B', type=str)
     parser.add_argument('--d_model', default=1024, type=int)
     parser.add_argument('--input_dim', default=90, type=int)
     parser.add_argument('--token_kernel', default=3, type=int)
@@ -173,6 +173,7 @@ def main():
         start_layer=args.start_layer,
         frozen_llm_layer=args.frozen_llm_layer,
         batch_seq_len=args.time_length,
+        lora=args.lora
     )
     
     optimizer = optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.weight_deacy)

@@ -233,7 +233,7 @@ class LLM2Rec(nn.Module):
         for param in self.llm_model.wpe.parameters():
             param.requires_grad = True
 
-        for i, layer in enumerate(self.gpt2.h):
+        for i, layer in enumerate(self.llm_model.h):
             if i < end_layer and i >= start_layer:
                 for i, (name, param) in enumerate(layer.named_parameters()):
                     if 'ln' in name:
