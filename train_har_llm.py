@@ -49,6 +49,7 @@ def get_args_parser():
     parser.add_argument('--epoch', default=5, type=int)
     parser.add_argument('--batch_size', default=8, type=int)
     parser.add_argument('--lr', default=2e-5, type=float)
+    parser.add_argument('--scheduler', default=True, type=bool)
     parser.add_argument('--weight_deacy', default=1e-4, type=float)
     parser.add_argument('--label_smooth_rate', default=0.02, type=float)
     parser.add_argument('--accumulate_backword', default=0, type=int)
@@ -88,7 +89,8 @@ def train_model(model, train_data, start_epoch, epochs, optimizer, scheduler,
             Avg_Loss.append(avg_loss)
 
             bar.set_description(desc = f'Epoch {epoch}/{epochs}: model classification loss: {avg_loss:.4f}')
-        scheduler.step()
+        if args.scheduler:
+            scheduler.step()
         if eval:
             print("***** Start Evaluation with Eval Data *****")
             eval_model(model, eval_data, loss_fn, device, args=args)
@@ -156,7 +158,9 @@ def main():
     )
     
     optimizer = optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.weight_deacy)
-    scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max= args.epoch, eta_min=1e-7)
+    scheduler = None
+    if args.scheduler:
+        scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max= args.epoch, eta_min=1e-7)
     loss_fn = nn.CrossEntropyLoss(label_smoothing=args.label_smooth_rate)
 
     # 4. Train
