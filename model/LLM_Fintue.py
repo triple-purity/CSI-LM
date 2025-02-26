@@ -101,6 +101,21 @@ class ReprogrammingLayer(nn.Module):
 
         return reprogramming_embedding
 
+class RMSNorm(nn.Module):
+    def __init__(self, hidden_size, eps=1e-6):
+        super().__init__()
+        self.weight = nn.Parameter(torch.ones(hidden_size))
+        self.variance_epsilon = eps
+
+    def forward(self, hidden_states):
+        input_dtype = hidden_states.dtype
+        hidden_states = hidden_states.to(torch.float32)
+        variance = hidden_states.pow(2).mean(-1, keepdim=True)
+        hidden_states = hidden_states * torch.rsqrt(variance + self.variance_epsilon)
+        return self.weight * hidden_states.to(input_dtype)
+
+    def extra_repr(self):
+        return f"{tuple(self.weight.shape)}, eps={self.variance_epsilon}"
 
 
 # 3. Network Based LLM
@@ -162,12 +177,16 @@ class LLM2Rec(nn.Module):
         self.load_LLM()
 
         # 4. Reprogramming Layer
-        self.up_proj = nn.Linear(d_model, 2*d_model)
-        self.gate_proj = nn.Linear(d_model, 2*d_model)
-        self.down_proj = nn.Linear(2*d_model, d_model)
+        if self.llm_name in llama_names.keys():
+            self.norm = RMSNorm(self.d_model)
+        else:
+            self.norm = nn.LayerNorm(self.d_model)
+        self.repo_linear=None
+        if self.d_model != self.d_llm:
+            self.repo_linear = nn.Linear(self.d_model, self.d_llm)
 
         self.word_embeddings = self.llm_model.get_input_embeddings().weight # 获得权重
-        # self.word_embeddings.requires_grad = False
+        self.word_embeddings.requires_grad = False
         self.vocab_size = self.word_embeddings.shape[0] # 获得词表大小
         self.num_tokens = 1000 
         self.mapping_layer = nn.Linear(self.vocab_size, self.num_tokens)
@@ -175,9 +194,7 @@ class LLM2Rec(nn.Module):
 
         # 5.Classifier Head
         self.head_for_class_TS = nn.Sequential(
-            nn.Linear(self.d_llm, self.d_llm),
-            nn.ReLU(inplace=True),
-            nn.Linear(self.d_llm, num_classes),
+            nn.Linear(self.d_llm, self.num_classes),
             nn.Dropout(dropout),
         )
         
@@ -263,8 +280,9 @@ class LLM2Rec(nn.Module):
             x = self.token_embedding(x)
             # x = torch.cat((self.start_token.expand(B, 1, -1), x), dim=1)
             if reprogramming:    
-                x = self.down_proj(self.gate_proj(x)*self.up_proj(x))
-                x = self.reprogramming_layer(x, source_embeddings, source_embeddings)
+                res = x
+                res = self.reprogramming_layer(self.norm(res), source_embeddings, source_embeddings)               
+                x = (self.repo_linear(x) if self.repo_linear else x) + res
             x = torch.cat((x, self.stop_token.expand(B, 1, -1)), dim=1)
 
             outputs = self.llm_model(inputs_embeds=x).last_hidden_state

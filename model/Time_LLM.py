@@ -64,7 +64,6 @@ class FlattenHead(nn.Module):
         x = self.dropout(x)
         return x
 
-
 class Model(nn.Module):
 
     def __init__(self,
