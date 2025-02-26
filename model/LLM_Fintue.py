@@ -177,7 +177,7 @@ class LLM2Rec(nn.Module):
         self.load_LLM()
 
         # 4. Reprogramming Layer
-        if self.llm_name in llama_names.keys():
+        if self.llm_name in llama_names:
             self.norm = RMSNorm(self.d_model)
         else:
             self.norm = nn.LayerNorm(self.d_model)
