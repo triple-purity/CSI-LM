@@ -40,7 +40,7 @@ def get_args_parser():
     parser.add_argument('--n_heads', default=8, type=int)
     parser.add_argument('--llm_layers', default=12, type=int)
     parser.add_argument('--start_layer', default=0, type=int)
-    parser.add_argument('--frozen_llm_layer', default=8, type=int)
+    parser.add_argument('--frozen_llm_layer', default=12, type=int)
     parser.add_argument('--lora', default=False, type=bool)
     parser.add_argument('--reprogramming', default=False, type=bool)
 

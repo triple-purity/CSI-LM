@@ -59,6 +59,25 @@ class MultiHeadAttention(nn.Module):
 
         out = self.fc_out(out)
         return self.dropout(out)
+    
+class Encoder(nn.Module):
+    def __init__(self, embed_size, heads, head_dim=None, dropout=0.):
+        super(Encoder, self).__init__()
+        self.norm1 = nn.LayerNorm(embed_size)
+        self.attention = MultiHeadAttention(embed_size, heads, head_dim, dropout)
+        self.mlp = nn.Sequential(
+            nn.Linear(embed_size, embed_size * 4),
+            nn.GELU(),
+            nn.Linear(embed_size * 4, embed_size),
+            nn.Dropout(dropout),
+        )
+        self.norm2 = nn.LayerNorm(embed_size)
+    
+    def forward(self, x):
+        x += self.attention(self.norm1(x))
+        x += self.mlp(self.norm2(x))
+        return x
+
 
 # 2. ReprogrammingLayer
 # To transform the target embedding into the same dimension as the source embedding
@@ -161,11 +180,7 @@ class LLM2Rec(nn.Module):
                 nn.ReLU(inplace=True),
             )
         # token_embedding is used for [B,T,C]
-        self.token_embedding = TokenEmbedding(
-            reduce_dim, 
-            d_model, 
-            kernel=token_kernel
-        )
+        self.token_embedding = TokenEmbedding(reduce_dim, d_model, kernel=token_kernel)
         # patch_embedding is used for [B,C,T]
         self.patch_embedding = PatchEmbedding(d_model, patch_len=patch_len, patch_stride=patch_len//2)
 
@@ -192,14 +207,12 @@ class LLM2Rec(nn.Module):
         self.mapping_layer = nn.Linear(self.vocab_size, self.num_tokens)
         self.reprogramming_layer = ReprogrammingLayer(self.d_model, self.n_heads, self.d_llm)
 
-        # 5.Classifier Head
-        self.head_for_class_TS = nn.Sequential(
+        # 5. Patch 
+        self.path_encoder = Encoder(self.d_model, self.n_heads)
+
+        # 6.Classifier Head
+        self.head = nn.Sequential(
             nn.Linear(self.d_llm, self.num_classes),
-            nn.Dropout(dropout),
-        )
-        
-        self.head_for_class_ST = nn.Sequential(
-            nn.Linear(self.d_llm, num_classes),
             nn.Dropout(dropout),
         )
 
@@ -267,26 +280,32 @@ class LLM2Rec(nn.Module):
     def forward(self, x, reprogramming=False):
         B, T, C = x.shape
 
-        # 1. Repogramming Layer
-        source_embeddings = self.mapping_layer(self.word_embeddings.permute(1, 0)).permute(1, 0)
-
+        # 1. Reduce Time
         if self.is_reduce_time:
             x = x.permute(0, 2, 1)
             x = self.conv_reduce(x)
             x = x.permute(0, 2, 1)
 
-        x = self.token_embedding(x)
-        # x = torch.cat((self.start_token.expand(B, 1, -1), x), dim=1)
-        if reprogramming:    
-            res = x
+        # 2. Token Embedding
+        x1 = self.token_embedding(x)
+        if reprogramming:
+            source_embeddings = self.mapping_layer(self.word_embeddings.permute(1, 0)).permute(1, 0)    
+            res = x1
             res = self.reprogramming_layer(self.norm(res), source_embeddings, source_embeddings)               
-            x = (self.repo_linear(x) if self.repo_linear else x) + res
-        x = torch.cat((x, self.stop_token.expand(B, 1, -1)), dim=1)
+            x1 = (self.repo_linear(x1) if self.repo_linear else x1) + res
+        x1 = torch.cat((x1, self.stop_token.expand(B, 1, -1)), dim=1)
+        x1 = self.llm_model(inputs_embeds=x1).last_hidden_state
+        x1 = x1[:,-1]
 
-        outputs = self.llm_model(inputs_embeds=x).last_hidden_state
+        # 3. Patch Embedding
+        x2 = x.permute(0, 2, 1)
+        x2, nvars = self.patch_embedding(x2)
+        x2 = self.llm_model(inputs_embeds=x2).last_hidden_state
+        x2 = x2.view(B, nvars, -1)
+        x2 = torch.cat((self.start_token.expand(B, 1, -1), x2), dim=1)
+        x2 = self.path_encoder(x2)[:, 0]
 
-        outputs = outputs[:,-1]
-        outputs = self.head_for_class_TS(outputs)
+        outputs = self.head(x1+x2)
 
         '''
         The Extral Method
