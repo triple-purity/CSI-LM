@@ -183,7 +183,7 @@ class LLM2Rec(nn.Module):
             self.norm = nn.LayerNorm(self.d_model)
         self.repo_linear=None
         if self.d_model != self.d_llm:
-            self.repo_linear = nn.Linear(self.d_model, self.d_llm)
+            self.repro_linear = nn.Linear(self.d_model, self.d_llm)
 
         self.word_embeddings = self.llm_model.get_input_embeddings().weight # 获得权重
         self.word_embeddings.requires_grad = False
@@ -264,54 +264,42 @@ class LLM2Rec(nn.Module):
             else:
                 break
 
-    def forward(self, x, mode='TS', reprogramming=False):
-        assert mode in ['TS', 'ST'], "mode should be TS or ST"
+    def forward(self, x, reprogramming=False):
         B, T, C = x.shape
 
         # 1. Repogramming Layer
         source_embeddings = self.mapping_layer(self.word_embeddings.permute(1, 0)).permute(1, 0)
 
-        if mode == 'TS':
-            if self.is_reduce_time:
-                x = x.permute(0, 2, 1)
-                x = self.conv_reduce(x)
-                x = x.permute(0, 2, 1)
-
-            x = self.token_embedding(x)
-            # x = torch.cat((self.start_token.expand(B, 1, -1), x), dim=1)
-            if reprogramming:    
-                res = x
-                res = self.reprogramming_layer(self.norm(res), source_embeddings, source_embeddings)               
-                x = (self.repo_linear(x) if self.repo_linear else x) + res
-            x = torch.cat((x, self.stop_token.expand(B, 1, -1)), dim=1)
-
-            outputs = self.llm_model(inputs_embeds=x).last_hidden_state
-
-            outputs = outputs[:,-1]
-            outputs = self.head_for_class_TS(outputs)
-            return outputs
-        else:
-            '''
-            CSI Data Shape: [B, C, T]->[B*C, L, Patch_len]->[B*L, C, d_model]
-            Calculate CSI in Every Block as:
-            1) [B*C, L, d_model]->[B*C, L, d_model] -- LLM Block forward
-            2) [B*C, L, d_model]->[B*L, C, d_mdoel] -- Reshape to calculate L-th C channel data
-            3) [B*L, C, d_model]->[B*L, C, d_model] -- Transformer Encoder
-            4) [B*L, C, d_model]->[B*C, L, d_model] -- Reshape to origin
-            '''
+        if self.is_reduce_time:
             x = x.permute(0, 2, 1)
-            x, n_vars = self.patch_embedding(x)
-            x = torch.cat((self.start_token.expand(B, 1, -1), x), dim=1)
-            x = torch.cat((x, self.stop_token.expand(B, 1, -1)), dim=1)
-            
-            outputs = self.llm_model(inputs_embeds=x).last_hidden_state
+            x = self.conv_reduce(x)
+            x = x.permute(0, 2, 1)
 
-            outputs = outputs[:, -1]
-            outputs = self.head_for_class_ST(outputs)
-            return outputs
-    
-    def predict(self, x, mode='TS', reprogramming=False):
-        x_logits = self.forward(x, mode=mode, reprogramming=reprogramming)
+        x = self.token_embedding(x)
+        # x = torch.cat((self.start_token.expand(B, 1, -1), x), dim=1)
+        if reprogramming:    
+            res = x
+            res = self.reprogramming_layer(self.norm(res), source_embeddings, source_embeddings)               
+            x = (self.repo_linear(x) if self.repo_linear else x) + res
+        x = torch.cat((x, self.stop_token.expand(B, 1, -1)), dim=1)
+
+        outputs = self.llm_model(inputs_embeds=x).last_hidden_state
+
+        outputs = outputs[:,-1]
+        outputs = self.head_for_class_TS(outputs)
+
+        '''
+        The Extral Method
+        CSI Data Shape: [B, C, T]->[B*C, L, Patch_len]->[B*L, C, d_model]
+        Calculate CSI in Every Block as:
+        1) [B*C, L, d_model]->[B*C, L, d_model] -- LLM Block forward
+        2) [B*C, L, d_model]->[B*L, C, d_mdoel] -- Reshape to calculate L-th C channel data
+        3) [B*L, C, d_model]->[B*L, C, d_model] -- Transformer Encoder
+        4) [B*L, C, d_model]->[B*C, L, d_model] -- Reshape to origin
+        '''
+        return outputs
+    def predict(self, x, reprogramming=False):
+        x_logits = self.forward(x, reprogramming=reprogramming)
         pre_labels = torch.argmax(x_logits, dim=1)
         return x_logits, pre_labels
 
