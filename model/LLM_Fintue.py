@@ -17,7 +17,7 @@ from peft import get_peft_model, LoraConfig
 from einops import rearrange
 from model.embed import TokenEmbedding, PositionalEmbedding, PatchEmbedding
 
-llama_names = ['unsloth/Llama-3.2-1B', 'Qwen/Qwen2.5-1.5B']
+llama_names = ['unsloth/Llama-3.2-1B', 'Qwen/Qwen2.5-1.5B', 'deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B']
 gpt_names = ['openai-community/gpt2']
 
 # 1. Attention Block as Transformer Encoder
@@ -306,11 +306,13 @@ class LLM2Rec(nn.Module):
             source_embeddings = self.mapping_layer(self.word_embeddings.permute(1, 0)).permute(1, 0)    
             x1 = x1+self.reprogramming_layer(x1, source_embeddings, source_embeddings)               
         
-        x1 = torch.cat((x1, self.stop_token.expand(B, 1, -1)), dim=1)
+        # x1 = torch.cat((x1, self.stop_token.expand(B, 1, -1)), dim=1)
         
         x1 = self.llm_model(inputs_embeds=x1).last_hidden_state
         x1 = x1[:,-1]
         
+
+
         return self.head(x1)
 
         # 3. Patch Embedding
