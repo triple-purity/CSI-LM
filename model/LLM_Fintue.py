@@ -172,8 +172,9 @@ class LLM2Rec(nn.Module):
         be_prompt = (
             f"<|start_prompt|>Role: An expert with profound knowledge and extensive practical experience in the field of communications. "
             f"Task: Determine the specific actions of individuals in a given environment based on WiFi Channel State Information (CSI) signal sequences."       
-            f"You need to comprehensively consider various factors such as the propagation characteristics and attenuation patterns of WiFi signals in different environments and under various action states of individuals.<|end_prompt|>"
-            f"<|start_input|>CSI Signals:"
+            # f"You need to comprehensively consider various factors such as the propagation characteristics and attenuation patterns of WiFi signals in different environments and under various action states of individuals."
+            f"<|end_prompt|>"
+            f"<|start_input|>Information of CSI Signals:"
         )
         af_prompt = (
             f"<|end_output|>"
@@ -310,8 +311,6 @@ class LLM2Rec(nn.Module):
         
         x1 = self.llm_model(inputs_embeds=x1).last_hidden_state
         x1 = x1[:,-1]
-        
-
 
         return self.head(x1)
 
@@ -334,7 +333,6 @@ class LLM2Rec(nn.Module):
         3) [B*L, C, d_model]->[B*L, C, d_model] -- Transformer Encoder
         4) [B*L, C, d_model]->[B*C, L, d_model] -- Reshape to origin
         '''
-        return outputs
     def predict(self, x, reprogramming=False):
         x_logits = self.forward(x, reprogramming=reprogramming)
         pre_labels = torch.argmax(x_logits, dim=1)
