@@ -8,9 +8,9 @@ import torch.nn.functional as F
 from torch import optim
 
 from transformers import BertTokenizer, BertModel
-from transformers import LlamaModel, LlamaConfig
-from transformers import Qwen2Model, Qwen2Config
-from transformers import GPT2Model, GPT2Config
+from transformers import LlamaTokenizer, LlamaModel, LlamaConfig
+from transformers import Qwen2Tokenizer, Qwen2Model, Qwen2Config
+from transformers import GPT2Tokenizer, GPT2Model, GPT2Config
 
 from peft import get_peft_model, LoraConfig
 
@@ -18,7 +18,7 @@ from einops import rearrange
 from model.embed import TokenEmbedding, PositionalEmbedding, PatchEmbedding
 
 llama_names = ['unsloth/Llama-3.2-1B', 'Qwen/Qwen2.5-1.5B']
-gpt_names = ['openai-community/gpt2', 'openai-community/gpt2-medium']
+gpt_names = ['openai-community/gpt2']
 
 # 1. Attention Block as Transformer Encoder
 class MultiHeadAttention(nn.Module):
@@ -144,7 +144,7 @@ class LLM2Rec(nn.Module):
                  llm_name,
                  d_model,
                  input_dim = 90,
-                 token_kernel=3,
+                 token_kernels=[3, 11, 21],
                  reduce_ratio = 1,
                  patch_len = 20,
                  n_heads = 8,
@@ -168,7 +168,24 @@ class LLM2Rec(nn.Module):
         self.reduce_ratio = reduce_ratio
         self.n_heads = n_heads
 
-        # 1. CSI Process
+        # 0. Edit Prompt
+        be_prompt = (
+            f"<|start_prompt|>Role: An expert with profound knowledge and extensive practical experience in the field of communications. "
+            f"Task: Determine the specific actions of individuals in a given environment based on WiFi Channel State Information (CSI) signal sequences."       
+            f"You need to comprehensively consider various factors such as the propagation characteristics and attenuation patterns of WiFi signals in different environments and under various action states of individuals.<|end_prompt|>"
+            f"<|start_input|>CSI Signals:"
+        )
+        af_prompt = (
+            f"<|end_output|>"
+            f"<|start_output|>The current action of the character is"
+        )
+        be_prompt = self.llm_tokenizer(be_prompt, return_tensors="pt").input_ids
+        af_prompt = self.llm_tokenizer(af_prompt, return_tensors="pt").input_ids
+
+        # 1. Load LLM
+        self.load_LLM()
+        
+        # 2. CSI Process
         self.is_reduce_time = reduce_ratio != 1
         reduce_dim = self.input_dim*(reduce_ratio*2) if self.is_reduce_time else self.input_dim
         if self.is_reduce_time:
@@ -179,27 +196,24 @@ class LLM2Rec(nn.Module):
                 nn.BatchNorm1d(reduce_dim),
                 nn.ReLU(inplace=True),
             )
-        # token_embedding is used for [B,T,C]
-        self.token_embedding = TokenEmbedding(reduce_dim, d_model, kernel=token_kernel)
-        # patch_embedding is used for [B,C,T]
+        # 2.1 token_embedding is used for [B,T,C]
+        self.token_embeddings = nn.ModuleList(
+            [TokenEmbedding(reduce_dim, d_model, token_kernel) for token_kernel in token_kernels]
+        )
+        self.token_linear = nn.Sequential(
+            nn.Linear(d_model*len(token_kernels), self.d_llm),
+            nn.Dropout(dropout),
+            RMSNorm(self.d_llm) if self.llm_name == 'llama' else nn.LayerNorm(self.d_llm) 
+        )
+        # 2.2 patch_embedding is used for [B,C,T]
         self.patch_embedding = PatchEmbedding(d_model, patch_len=patch_len, patch_stride=patch_len//2)
+        self.path_encoder = Encoder(self.d_model, self.n_heads)
 
-        # 2. Add Extral token
+        # 3. Add Extral token
         self.start_token = nn.Parameter(torch.zeros(1, 1, d_model), requires_grad=True)
         self.stop_token = nn.Parameter(torch.zeros(1, 1, d_model), requires_grad=True)
 
-        # 3. Load LLM
-        self.load_LLM()
-
         # 4. Reprogramming Layer
-        if self.llm_name in llama_names:
-            self.norm = RMSNorm(self.d_model)
-        else:
-            self.norm = nn.LayerNorm(self.d_model)
-        self.repo_linear=None
-        if self.d_model != self.d_llm:
-            self.repro_linear = nn.Linear(self.d_model, self.d_llm)
-
         self.word_embeddings = self.llm_model.get_input_embeddings().weight # 获得权重
         self.word_embeddings.requires_grad = False
         self.vocab_size = self.word_embeddings.shape[0] # 获得词表大小
@@ -207,10 +221,7 @@ class LLM2Rec(nn.Module):
         self.mapping_layer = nn.Linear(self.vocab_size, self.num_tokens)
         self.reprogramming_layer = ReprogrammingLayer(self.d_model, self.n_heads, self.d_llm)
 
-        # 5. Patch 
-        self.path_encoder = Encoder(self.d_model, self.n_heads)
-
-        # 6.Classifier Head
+        # 5.Classifier Head
         self.head = nn.Sequential(
             nn.Linear(self.d_llm, self.num_classes),
             nn.Dropout(dropout),
@@ -220,16 +231,19 @@ class LLM2Rec(nn.Module):
         assert self.llm_name in llama_names or self.llm_name in gpt_names, f"LLM model {self.llm_name} is not defined"
 
         if self.llm_name == 'unsloth/Llama-3.2-1B':
+            self.llm_tokenizer = LlamaTokenizer.from_pretrained(self.llm_name)
             self.llm_config = LlamaConfig.from_pretrained(self.llm_name)
             self.llm_config.num_hidden_layers = self.llm_layers
             self.llm_model = LlamaModel.from_pretrained(self.llm_name, config=self.llm_config)
             self.d_llm = self.llm_config.hidden_size
         elif self.llm_name == 'Qwen/Qwen2.5-1.5B':
+            self.llm_tokenizer = Qwen2Tokenizer.from_pretrained(self.llm_name)
             self.llm_config = Qwen2Config.from_pretrained(self.llm_name)
             self.llm_config.num_hidden_layers = self.llm_layers
             self.llm_model = Qwen2Model.from_pretrained(self.llm_name)
             self.d_llm = self.llm_config.hidden_size
         elif self.llm_name == 'openai-community/gpt2':
+            self.llm_tokenizer = GPT2Tokenizer.from_pretrained(self.llm_name)
             self.llm_config = GPT2Config.from_pretrained(self.llm_name)
             self.llm_config.n_layer = self.llm_layers
             self.llm_model = GPT2Model.from_pretrained(self.llm_name, config=self.llm_config)
@@ -290,22 +304,24 @@ class LLM2Rec(nn.Module):
         x1 = self.token_embedding(x)
         if reprogramming:
             source_embeddings = self.mapping_layer(self.word_embeddings.permute(1, 0)).permute(1, 0)    
-            res = x1
-            res = self.reprogramming_layer(self.norm(res), source_embeddings, source_embeddings)               
-            x1 = (self.repo_linear(x1) if self.repo_linear else x1) + res
+            x1 = x1+self.reprogramming_layer(x1, source_embeddings, source_embeddings)               
+        
         x1 = torch.cat((x1, self.stop_token.expand(B, 1, -1)), dim=1)
+        
         x1 = self.llm_model(inputs_embeds=x1).last_hidden_state
         x1 = x1[:,-1]
+        
+        return self.head(x1)
 
         # 3. Patch Embedding
+        '''
         x2 = x.permute(0, 2, 1)
         x2, nvars = self.patch_embedding(x2)
         x2 = self.llm_model(inputs_embeds=x2).last_hidden_state
         x2 = x2.view(B, nvars, -1)
         x2 = torch.cat((self.start_token.expand(B, 1, -1), x2), dim=1)
         x2 = self.path_encoder(x2)[:, 0]
-
-        outputs = self.head(x1+x2)
+        '''
 
         '''
         The Extral Method
