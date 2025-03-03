@@ -295,6 +295,12 @@ class LLM2Rec(nn.Module):
     def forward(self, x, reprogramming=False):
         B, T, C = x.shape
 
+        # 0. Prompt Embeddings
+        be_prompt = self.llm_tokenizer(self.be_prompt, return_tensors="pt").input_ids
+        af_prompt = self.llm_tokenizer(self.af_prompt, return_tensors="pt").input_ids
+        be_prompt_embed = self.llm_model.get_input_embeddings()(be_prompt.to(x.device)).expand((B, -1, -1))
+        af_prompt_embed = self.llm_model.get_input_embeddings()(af_prompt.to(x.device)).expand((B, -1, -1))
+
         # 1. Reduce Time
         if self.is_reduce_time:
             x = x.permute(0, 2, 1)
@@ -309,10 +315,11 @@ class LLM2Rec(nn.Module):
         x1 = self.token_linear(x1)
         if reprogramming:
             source_embeddings = self.mapping_layer(self.word_embeddings.permute(1, 0)).permute(1, 0)    
-            x1 = x1+self.reprogramming_layer(x1, source_embeddings, source_embeddings)               
+            x1 = self.reprogramming_layer(x1, source_embeddings, source_embeddings)               
         
         # x1 = torch.cat((x1, self.stop_token.expand(B, 1, -1)), dim=1)
-        
+        x1 = torch.cat((be_prompt_embed, x1, af_prompt_embed), dim=1)
+
         x1 = self.llm_model(inputs_embeds=x1).last_hidden_state
         x1 = x1[:,-1]
 
