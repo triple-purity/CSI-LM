@@ -34,7 +34,7 @@ def get_args_parser():
     parser.add_argument('--llm_name', default='unsloth/Qwen2.5-1.5B', type=str)
     parser.add_argument('--d_model', default=1024, type=int)
     parser.add_argument('--input_dim', default=90, type=int)
-    parser.add_argument('--token_kernel', default=3, type=int)
+    parser.add_argument('--token_kernels', default=[3, 11, 31], type=int, nargs='+')
     parser.add_argument('--reduce_ratio', default=1, type=int)
     parser.add_argument('--patch_len', default=12, type=int)
     parser.add_argument('--n_heads', default=8, type=int)

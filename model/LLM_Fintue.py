@@ -241,7 +241,7 @@ class LLM2Rec(nn.Module):
             self.llm_tokenizer = Qwen2Tokenizer.from_pretrained(self.llm_name)
             self.llm_config = Qwen2Config.from_pretrained(self.llm_name)
             self.llm_config.num_hidden_layers = self.llm_layers
-            self.llm_model = Qwen2Model.from_pretrained(self.llm_name)
+            self.llm_model = Qwen2Model.from_pretrained(self.llm_name, config=self.llm_config)
             self.d_llm = self.llm_config.hidden_size
         elif self.llm_name == 'openai-community/gpt2':
             self.llm_tokenizer = GPT2Tokenizer.from_pretrained(self.llm_name)
@@ -302,7 +302,11 @@ class LLM2Rec(nn.Module):
             x = x.permute(0, 2, 1)
 
         # 2. Token Embedding
-        x1 = self.token_embedding(x)
+        conv_x = []
+        for layer in self.token_embeddings:
+            conv_x.append(layer(x))
+        x1 = torch.cat(conv_x, dim=-1)
+        x1 = self.token_linear(x1)
         if reprogramming:
             source_embeddings = self.mapping_layer(self.word_embeddings.permute(1, 0)).permute(1, 0)    
             x1 = x1+self.reprogramming_layer(x1, source_embeddings, source_embeddings)               
@@ -344,7 +348,7 @@ def build_LLM2Rec(
         llm_name, 
         d_model,
         input_dim = 90,
-        token_kernel=3,
+        token_kernels=[3, 11, 31],
         reduce_ratio = 1,
         patch_len = 20,
         n_heads=8,
@@ -359,7 +363,7 @@ def build_LLM2Rec(
             llm_name=llm_name,
             d_model=d_model,
             input_dim=input_dim,
-            token_kernel=token_kernel,
+            token_kernels=token_kernels,
             reduce_ratio = reduce_ratio,
             patch_len = patch_len,
             n_heads=n_heads,
