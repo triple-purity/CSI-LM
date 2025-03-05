@@ -78,6 +78,18 @@ class Encoder(nn.Module):
         x += self.mlp(self.norm2(x))
         return x
 
+class TimeEncoder(nn.Module):
+    def __init__(self, embed_size, heads, head_dim=None, num_encoder=4, dropout=0.1):
+        super(TimeEncoder, self).__init__()
+        self.layers = nn.ModuleList(
+            [Encoder(embed_size, heads, head_dim, dropout) for _ in range(num_encoder)]
+        )
+
+    def forward(self, x):
+        for layer in self.layers:
+            x = layer(x)
+        return x
+
 
 # 2. ReprogrammingLayer
 # To transform the target embedding into the same dimension as the source embedding

@@ -3,6 +3,7 @@ import numpy as np
 import pywt
 from scipy.signal import stft
 from scipy.interpolate import interp1d, CubicSpline, splev, splrep
+from sklearn.decomposition import PCA
 
 # 1. Create CSI-Ratio from CSI
 def calculate_amplitude_variance_ratio(csi_data):
@@ -56,12 +57,66 @@ def calculate_csi_ratio(csi_data):
 
     return csi_ratio, reference_antenna_index
 
-# 2. Resample CSI Sequence
-def resample_csi_sequence(csi_sequence, target_length=500):
+# 2. Denoise the Phase of CSI-Ratio
+def hampel_filter(data, window_size=5, n_sigmas=3):
+    """
+    使用Hampel滤波器去除时间序列中的异常值。
+    
+    :param data: 输入的时间序列数据，形状为 (num_packets, num_antennas, num_subcarriers)
+    :param window_size: 计算中位数和MAD的窗口大小
+    :param n_sigmas: 阈值的倍数
+    :return: 去除异常值后的时间序列数据
+    """
+    filtered_data = np.copy(data)
+    num_packets, num_antennas, num_subcarriers = data.shape
+    
+    for ant in range(num_antennas):
+        for sc in range(num_subcarriers):
+            sequence = data[:, ant, sc]
+            median = np.median(sequence)
+            deviation = np.abs(sequence - median)
+            mad = np.median(deviation)
+            # 计算阈值
+            threshold = n_sigmas * mad
+            # 检测异常值
+            outliers = deviation > threshold
+            # 替换异常值为中位数
+            filtered_data[outliers, ant, sc] = median
+    return filtered_data
+
+def phase_calibration(phase_data, epsilon=0.3):
+    """
+    对CSI-Ratio的相位数据进行相位校准。
+    参数:
+    phase_data: numpy数组，形状为(num_packets, num_antennas, num_subcarriers)，包含相位数据。
+    epsilon: 浮点数，经验性设置的阈值，默认为0.3。
+    返回:
+    校准后的相位数据，形状与phase_data相同。
+    """
+    calibrated_phase_data = phase_data.copy()
+    num_packets, num_antennas, num_subcarriers = phase_data.shape
+    
+    for ant in range(num_antennas):
+        for sc in range(num_subcarriers):
+            for t in range(1, num_packets):
+                phase_diff = calibrated_phase_data[t, ant, sc] - calibrated_phase_data[t-1, ant, sc]
+                while abs(phase_diff) > 2 * np.pi - epsilon:
+                    if phase_diff > 0:
+                        calibrated_phase_data[t, ant, sc] -= 2 * np.pi
+                    else:
+                        calibrated_phase_data[t, ant, sc] += 2 * np.pi
+                    phase_diff = calibrated_phase_data[t, ant, sc] - calibrated_phase_data[t-1, ant, sc]
+    
+    return calibrated_phase_data
+
+
+# 3. Resample CSI Sequence
+def resample_csi_sequence(csi_sequence, target_length=500, sample_way='linear'):
     """
     对单个CSI序列进行重采样至目标长度
     :param csi_sequence: 原始CSI序列，形状为 (original_length, num_antennas, num_subcarriers)
     :param target_length: 目标序列长度（默认为500）
+    :param sample_way: 插值方式，可选 'linear', 'cubic', 'spline'（默认为 'linear'）
     :return: 重采样后的CSI序列，形状为 (target_length, num_antennas, num_subcarriers)
     """
     original_length = csi_sequence.shape[0]
@@ -73,25 +128,59 @@ def resample_csi_sequence(csi_sequence, target_length=500):
     new_time = np.linspace(0, 1, target_length)          # 目标时间轴
     
     # 初始化输出序列
-    resampled_sequence = np.zeros((target_length, num_antennas, num_subcarriers))
+    resampled_sequence = np.zeros((target_length, num_antennas, num_subcarriers), dtype=csi_sequence.dtype)
     
     # 对每个天线和子载波进行插值
     for ant in range(num_antennas):
         for sc in range(num_subcarriers):
-            # 提取原始复数值序列
-            complex_sequence = csi_sequence[:, ant, sc]
+            # 提取原始序列
+            cur_sequence = csi_sequence[:, ant, sc]
             
-            # 创建插值函数
-            interp_real = interp1d(original_time, complex_sequence, kind='linear')
-
-            # 生成新序列
-            resampled_real = interp_real(new_time)
-            
-            resampled_sequence[:, ant, sc] = resampled_real
+            # 检查数据类型
+            if np.iscomplexobj(cur_sequence):
+                # 如果是复数，分别处理实部和虚部
+                real_part = np.real(cur_sequence)
+                imag_part = np.imag(cur_sequence)
+                
+                # 根据插值方式选择插值函数
+                if sample_way == 'linear':
+                    interp_real = interp1d(original_time, real_part, kind='linear')
+                    interp_imag = interp1d(original_time, imag_part, kind='linear')
+                elif sample_way == 'cubic':
+                    interp_real = CubicSpline(original_time, real_part)
+                    interp_imag = CubicSpline(original_time, imag_part)
+                elif sample_way == 'spline':
+                    tck_real = splrep(original_time, real_part, k=3)
+                    tck_imag = splrep(original_time, imag_part, k=3)
+                    interp_real = lambda x: splev(x, tck_real)
+                    interp_imag = lambda x: splev(x, tck_imag)
+                else:
+                    raise ValueError("Unsupported sample_way. Choose 'linear', 'cubic', or 'spline'.")
+                
+                # 生成新序列
+                resampled_real = interp_real(new_time)
+                resampled_imag = interp_imag(new_time)
+                
+                # 合并实部和虚部
+                resampled_sequence[:, ant, sc] = resampled_real + 1j * resampled_imag
+            else:
+                # 如果是实数，直接插值
+                if sample_way == 'linear':
+                    interp_fun = interp1d(original_time, cur_sequence, kind='linear')
+                elif sample_way == 'cubic':
+                    interp_fun = CubicSpline(original_time, cur_sequence)
+                elif sample_way == 'spline':
+                    tck = splrep(original_time, cur_sequence, k=3)
+                    interp_fun = lambda x: splev(x, tck)
+                else:
+                    raise ValueError("Unsupported sample_way. Choose 'linear', 'cubic', or 'spline'.")
+                
+                # 生成新序列
+                resampled_sequence[:, ant, sc] = interp_fun(new_time)
             
     return resampled_sequence
 
-# 3. 小波变换滤波
+# 4. 小波变换滤波
 def wavelet_denoise(signal, wavelet='db4', level=None, threshold_mode='soft', mode='sym'):
     """
     对一维信号进行小波去噪，支持实数和复数信号。
@@ -181,7 +270,47 @@ def denoise_csi_data(csi_data, wavelet='db4', level=None, threshold_mode='soft',
     
     return csi_denoised
 
-# 4. Extract DFS From CSI
+# 5. 短时傅里叶变换
+def apply_stft(pca_data, fs=1.0, window='hann', nperseg=256, noverlap=None):
+    """
+    对降维后的数据进行短时傅里叶变换。
+    :param pca_data: 降维后的数据，形状为 (num_packets, num_antennas, n_components)
+    :param fs: 采样频率
+    :param window: 窗口函数
+    :param nperseg: 每个分段的长度
+    :param noverlap: 分段之间的重叠长度
+    :return: STFT结果，形状为 (num_antennas, n_components, n_freqs, n_segments)
+    """
+    num_packets, num_antennas, n_components = pca_data.shape
+    stft_results = []
+
+    for ant in range(num_antennas):
+        for comp in range(n_components):
+            f, t, Zxx = stft(pca_data[:, ant, comp], fs=fs, window=window, nperseg=nperseg, noverlap=noverlap)
+            stft_results.append(Zxx)
+    
+    stft_results = np.array(stft_results).reshape(num_antennas, n_components, *Zxx.shape)
+    return f, t, stft_results
+# 6. PCA降维
+def apply_pca(amplitude_data, n_components=10):
+    """
+    对幅度数据进行PCA降维。
+    
+    :param amplitude_data: 幅度数据，形状为 (num_packets, num_antennas, num_subcarriers)
+    :param n_components: 降维后的主成分数量
+    :return: 降维后的数据，形状为 (num_packets, num_antennas, n_components)
+    """
+    num_packets, num_antennas, num_subcarriers = amplitude_data.shape
+    pca = PCA(n_components=n_components)
+    
+    # 对每个天线和子载波进行PCA降维
+    pca_data = np.zeros((num_packets, num_antennas, n_components))
+    for ant in range(num_antennas):
+        pca_data[:, ant, :] = pca.fit_transform(amplitude_data[:, ant, :])
+    
+    return pca_data
+
+# 6. Extract DFS From CSI
 def compute_dfs(csi_data, fs=121, nperseg=256):
     """
     计算 Doppler Frequency Spectrum (DFS)
