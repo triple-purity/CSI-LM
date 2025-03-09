@@ -86,7 +86,6 @@ class CSI_Dataset(Dataset):
                  data_names:List[str], 
                  labels: List[str], 
                  antenna_num: int,
-
                  unified_length: int = 500,
                  extract_method: str = 'amplitude',
                  data_key: str = 'csi_data', 
@@ -129,7 +128,7 @@ class CSI_Dataset(Dataset):
         # Extrac Information from CSI Data
         if self.extract_method == 'amplitude':
             abs_csi = np.abs(origin_csi)
-            denoised_csi = denoise_csi_data(abs_csi)
+            denoised_csi = denoise_csi_data(abs_csi, level=5, wavelet='sym8')
             resample_csi = resample_csi_sequence(denoised_csi, target_length=self.unified_length)
         elif self.extract_method == 'csi-ratio':
             csi_ratio, antenna_index = calculate_csi_ratio(origin_csi)
