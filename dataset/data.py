@@ -77,3 +77,19 @@ def get_dfs_data(data_path: str, req_domains: List[str],test_size = 0.2):
         test_labels = np.array(domains_res['gesture_type'])[test_index]
 
     return train_datas, train_labels, test_datas, test_labels
+
+# get SignFi Data
+def get_signfi_data(data_path: str, test_size = 0.2):
+    file_names = os.listdir(data_path)
+    labels = np.array([int(file.split('.')[0].split('-')[-1]) for file in file_names])
+    split_y= labels.reshape(-1, 1)
+
+    stra_split = StratifiedShuffleSplit(n_splits=1, test_size=test_size, random_state=42)
+    train_datas, train_labels, test_datas, test_labels = None, None, None, None
+    for train_index, test_index in stra_split.split(X=file_names, y=split_y):
+        train_datas = file_names[train_index]
+        train_labels = labels[train_index]
+        test_datas = file_names[test_index]
+        test_labels = labels[test_index]
+
+    return train_datas, train_labels, test_datas, test_labels

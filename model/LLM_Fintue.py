@@ -7,7 +7,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch import optim
 
-from transformers import BertTokenizer, BertModel
+from transformers import AutoTokenizer
 from transformers import LlamaTokenizer, LlamaModel, LlamaConfig
 from transformers import Qwen2Tokenizer, Qwen2Model, Qwen2Config
 from transformers import GPT2Tokenizer, GPT2Model, GPT2Config
@@ -244,19 +244,19 @@ class LLM2Rec(nn.Module):
         assert self.llm_name in llama_names or self.llm_name in gpt_names, f"LLM model {self.llm_name} is not defined"
 
         if self.llm_name == 'unsloth/Llama-3.2-1B':
-            self.llm_tokenizer = LlamaTokenizer.from_pretrained(self.llm_name)
+            self.llm_tokenizer = AutoTokenizer.from_pretrained(self.llm_name)
             self.llm_config = LlamaConfig.from_pretrained(self.llm_name)
             self.llm_config.num_hidden_layers = self.llm_layers
             self.llm_model = LlamaModel.from_pretrained(self.llm_name, config=self.llm_config)
             self.d_llm = self.llm_config.hidden_size
         elif self.llm_name == 'Qwen/Qwen2.5-1.5B':
-            self.llm_tokenizer = Qwen2Tokenizer.from_pretrained(self.llm_name)
+            self.llm_tokenizer = AutoTokenizer.from_pretrained(self.llm_name)
             self.llm_config = Qwen2Config.from_pretrained(self.llm_name)
             self.llm_config.num_hidden_layers = self.llm_layers
             self.llm_model = Qwen2Model.from_pretrained(self.llm_name, config=self.llm_config)
             self.d_llm = self.llm_config.hidden_size
         elif self.llm_name == 'openai-community/gpt2':
-            self.llm_tokenizer = GPT2Tokenizer.from_pretrained(self.llm_name)
+            self.llm_tokenizer = AutoTokenizer.from_pretrained(self.llm_name)
             self.llm_config = GPT2Config.from_pretrained(self.llm_name)
             self.llm_config.n_layer = self.llm_layers
             self.llm_model = GPT2Model.from_pretrained(self.llm_name, config=self.llm_config)
@@ -336,16 +336,6 @@ class LLM2Rec(nn.Module):
         x1 = x1[:,-1]
 
         return self.head(x1)
-
-        # 3. Patch Embedding
-        '''
-        x2 = x.permute(0, 2, 1)
-        x2, nvars = self.patch_embedding(x2)
-        x2 = self.llm_model(inputs_embeds=x2).last_hidden_state
-        x2 = x2.view(B, nvars, -1)
-        x2 = torch.cat((self.start_token.expand(B, 1, -1), x2), dim=1)
-        x2 = self.path_encoder(x2)[:, 0]
-        '''
 
         '''
         The Extral Method
