@@ -9,7 +9,7 @@ import torch
 from torch.utils.data import Dataset
 import torch.nn.functional as F
 
-from utils.tools import calculate_csi_ratio, hampel_filter, phase_calibration, denoise_csi_data, apply_pca, apply_stft, resample_csi_sequence
+from utils.preprocess_tools import calculate_csi_ratio, hampel_filter, phase_calibration, DWT_Denoise, get_doppler_spectrum, resample_csi_sequence
 
 def data_norm(x: torch.Tensor, norm_type: str = "min_max_1"):
     '''
@@ -81,8 +81,7 @@ class HAR_Dataset(Dataset):
 
 class CSI_Dataset(Dataset):
     """CSI dataset."""
-    def __init__(self, 
-                 data_path: str, 
+    def __init__(self,  
                  data_names:List[str], 
                  labels: List[str], 
                  antenna_num: int,
@@ -97,11 +96,11 @@ class CSI_Dataset(Dataset):
         Params:
             data_path (str): path to the dataset.
             transform (callable, optional): Optional transform to be applied on a sample.
+            extract_method (str): method to extract information from CSI data, must be in in ['amplitude', 'csi-ratio', 'dfs']
         """
-        assert extract_method in ['amplitude', 'csi-ratio', 'stft', 'dfs']
+        assert extract_method in ['amplitude', 'csi-ratio', 'dfs'], "Invalid extract method: {}".format(extract_method)
 
-        self.data_path = data_path
-        self.data_files = [os.path.join(data_path, name) for name in data_names]
+        self.data_files = data_names
         self.labels = labels
         self.antenna_num = antenna_num
         self.unified_length = unified_length
@@ -109,7 +108,7 @@ class CSI_Dataset(Dataset):
         self.data_key = data_key
         self.norm_type = norm_type
     def __len__(self):
-        return len(self.data_names)
+        return len(self.data_files)
     
     def __getitem__(self, idx: int) -> Tuple[torch.Tensor, int]:
         '''
@@ -128,26 +127,26 @@ class CSI_Dataset(Dataset):
         # Extrac Information from CSI Data
         if self.extract_method == 'amplitude':
             abs_csi = np.abs(origin_csi)
-            denoised_csi = denoise_csi_data(abs_csi, level=5, wavelet='sym8')
+            denoised_csi = DWT_Denoise(abs_csi, level=5, wavelet='sym8')
             resample_csi = resample_csi_sequence(denoised_csi, target_length=self.unified_length)
+            tensor_csi = torch.tensor(resample_csi, dtype=torch.float32)
+            tensor_csi = data_norm(tensor_csi, self.norm_type)
+            return tensor_csi, cur_label
         elif self.extract_method == 'csi-ratio':
             csi_ratio, antenna_index = calculate_csi_ratio(origin_csi)
             csi_ratio = np.concatenate((csi_ratio[:, :antenna_index, :], csi_ratio[:, antenna_index+1:, :]), axis=1)
             angle_csi_ratio = np.angle(origin_csi)
             angle_csi_ratio = phase_calibration(hampel_filter(angle_csi_ratio))
             resample_csi = resample_csi_sequence(csi_ratio, target_length=self.unified_length)
-        elif self.extract_method == 'stft':
-            # apply PCA to reduce dimension
-            resample_csi = resample_csi_sequence(origin_csi, target_length=self.unified_length)
-            pca_csi = apply_pca(resample_csi)
-            stft_csi = apply_stft(pca_csi)
-            # tensor化 && dim permute
-            
-        resample_csi = resample_csi.reshape(resample_csi.shape[0], -1)
-        tensor_csi = torch.tensor(resample_csi, dtype=torch.float32)
-        tensor_csi = data_norm(tensor_csi, self.norm_type)
-        return tensor_csi, cur_label
-    
+            tensor_csi = torch.tensor(resample_csi, dtype=torch.float32)
+            tensor_csi = data_norm(tensor_csi, self.norm_type)
+            return tensor_csi, cur_label
+        else:
+            # extract doppler spectrum from csi data
+            doppler_spectrum, *_ = get_doppler_spectrum(origin_csi)
+            tensor_dfs = torch.tensor(doppler_spectrum, dtype=torch.float32)
+            return tensor_dfs, cur_label
+
 
 class DFS_Dataset(Dataset):
     def __init__(self, 

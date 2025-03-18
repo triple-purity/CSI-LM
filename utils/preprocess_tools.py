@@ -232,7 +232,7 @@ def wavelet_denoise(signal, wavelet='db4', level=None, threshold_mode='soft', mo
         
         return denoised_signal
 
-def denoise_csi_data(csi_data, wavelet='db4', level=None, threshold_mode='soft', mode='sym', n_jobs=None):
+def DWT_Denoise(csi_data, wavelet='db4', level=None, threshold_mode='soft', mode='sym', n_jobs=None):
     """
     对CSI数据进行小波去噪（支持并行处理）
     
@@ -240,7 +240,7 @@ def denoise_csi_data(csi_data, wavelet='db4', level=None, threshold_mode='soft',
         csi_data: 三维CSI数据，形状为(num_packets, num_antennas, num_subcarriers)
         n_jobs: 并行任务数（None表示串行处理）
     """
-    num_packets, num_antennas, num_subcarriers = csi_data.shape
+    _, num_antennas, num_subcarriers = csi_data.shape
     csi_denoised = np.zeros_like(csi_data)
     
     # 并行处理
@@ -282,7 +282,7 @@ def apply_stft(pca_data, fs=1.0, window='hann', nperseg=256, noverlap=None):
     :param noverlap: 分段之间的重叠长度
     :return: STFT结果，形状为 (num_antennas, n_components, n_freqs, n_segments)
     """
-    num_packets, num_antennas, n_components = pca_data.shape
+    _, num_antennas, n_components = pca_data.shape
     stft_results = []
 
     for ant in range(num_antennas):
@@ -292,24 +292,6 @@ def apply_stft(pca_data, fs=1.0, window='hann', nperseg=256, noverlap=None):
     
     stft_results = np.array(stft_results).reshape(num_antennas, n_components, *Zxx.shape)
     return f, t, stft_results
-# 6. PCA降维
-def apply_pca(amplitude_data, n_components=10):
-    """
-    对幅度数据进行PCA降维。
-    
-    :param amplitude_data: 幅度数据，形状为 (num_packets, num_antennas, num_subcarriers)
-    :param n_components: 降维后的主成分数量
-    :return: 降维后的数据，形状为 (num_packets, num_antennas, n_components)
-    """
-    num_packets, num_antennas, num_subcarriers = amplitude_data.shape
-    pca = PCA(n_components=n_components)
-    
-    # 对每个天线和子载波进行PCA降维
-    pca_data = np.zeros((num_packets, num_antennas, n_components))
-    for ant in range(num_antennas):
-        pca_data[:, ant, :] = pca.fit_transform(amplitude_data[:, ant, :])
-    
-    return pca_data
 
 # 7. Extract DFS From CSI
 def dfs_pca(X, n_components=None, centered=True, algorithm='svd',
@@ -614,7 +596,7 @@ def get_doppler_spectrum(csi_data):
 
     # PCA分析
     conj_mult_temp = conj_mult.reshape(conj_mult.shape[0], -1)
-    coeff, score, latent, tsquared, explained, mu = dfs_pca(conj_mult_temp)
+    coeff, *_ = dfs_pca(conj_mult_temp)
     conj_mult_pca = np.dot(conj_mult_temp,coeff[:, 0])
     
     # 时频分析
