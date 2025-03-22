@@ -148,8 +148,6 @@ def main():
     args = get_args_parser()
     print(args)
     # 1. load data
-    data_modal = args.data_modal
-    assert data_modal in ['csi', 'dfs']
     print("***** Start Load Data *****")
     train_datas, train_labels, eval_datas, eval_labels = get_csi_data(
         args.data_path,
