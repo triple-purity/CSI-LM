@@ -74,8 +74,8 @@ class Encoder(nn.Module):
         self.norm2 = nn.LayerNorm(embed_size)
     
     def forward(self, x):
-        x += self.attention(self.norm1(x))
-        x += self.mlp(self.norm2(x))
+        x = x + self.attention(self.norm1(x))
+        x = x + self.mlp(self.norm2(x))
         return x
 
 class DowmLayer(nn.Module):
