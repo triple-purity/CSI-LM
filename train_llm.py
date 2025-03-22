@@ -188,7 +188,7 @@ def main():
     optimizer = optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.weight_deacy)
     scheduler = None
     if args.scheduler:
-        scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max= args.epoch, eta_min=1e-7)
+        scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max= args.epoch, eta_min=5e-6)
     loss_fn = nn.CrossEntropyLoss(label_smoothing=args.label_smooth_rate)
 
     # 4. Train
