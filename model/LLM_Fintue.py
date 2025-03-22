@@ -244,7 +244,7 @@ class LLM2Rec(nn.Module):
         self.word_embeddings = self.llm_model.get_input_embeddings().weight # 获得权重
         self.word_embeddings.requires_grad = False
         self.vocab_size = self.word_embeddings.shape[0] # 获得词表大小
-        self.num_tokens = 1000 
+        self.num_tokens = 500 
         self.mapping_layer = nn.Linear(self.vocab_size, self.num_tokens)
         self.reprogramming_layer = ReprogrammingLayer(self.d_llm, self.n_heads, self.d_llm)
 
