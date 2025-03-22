@@ -34,7 +34,7 @@ def select_reference_antenna(csi_data):
     reference_antenna_index = np.argmin(variance_ratio_sum)
     return reference_antenna_index
 
-def calculate_csi_ratio(csi_data):
+def calculate_csi_ratio(csi_data, eps=1e-6):
     """
     计算CSI比值（CSI-Ratio）
     :param csi_data: CSI数据，形状为 (num_packets, num_antennas, num_subcarriers)
@@ -45,16 +45,15 @@ def calculate_csi_ratio(csi_data):
     # 选择参考天线
     reference_antenna_index = select_reference_antenna(csi_data)
     reference_csi = csi_data[:, reference_antenna_index, :]  # 参考天线的CSI数据
-
+    
     # 计算CSI比值
     csi_ratio = np.zeros_like(csi_data)
     for antenna in range(num_antennas):
         if antenna == reference_antenna_index:
-            # 参考天线的CSI比值为1
-            csi_ratio[:, antenna, :] = 1.0
+            continue
         else:
             # 其他天线的CSI比值
-            csi_ratio[:, antenna, :] = csi_data[:, antenna, :] / reference_csi
+            csi_ratio[:, antenna, :] = csi_data[:, antenna, :] / ((np.abs(reference_csi) + eps)*np.exp(1j*np.angle(reference_csi)))
 
     return csi_ratio, reference_antenna_index
 

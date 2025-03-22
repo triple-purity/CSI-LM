@@ -78,12 +78,26 @@ class Encoder(nn.Module):
         x += self.mlp(self.norm2(x))
         return x
 
+class DowmLayer(nn.Module):
+    def __init__(self, embed_size):
+        super(DowmLayer, self).__init__()
+        self.layers = nn.Conv1d(embed_size, embed_size, kernel_size=3, padding=1, stride=2, bias=False)
+
+    def forward(self, x):
+        x = self.layers(x)
+        return x
+
+
 class TimeEncoder(nn.Module):
     def __init__(self, embed_size, heads, head_dim=None, num_encoder=4, dropout=0.1):
         super(TimeEncoder, self).__init__()
-        self.layers = nn.ModuleList(
-            [Encoder(embed_size, heads, head_dim, dropout) for _ in range(num_encoder)]
-        )
+        self.layers = []
+        for i in range(num_encoder):
+            if i < num_encoder-1:
+                self.layers.append(Encoder(embed_size, heads, head_dim, dropout))
+                self.layers.append(DowmLayer(embed_size))
+            else:
+                self.layers.append(Encoder(embed_size, heads, head_dim, dropout))
 
     def forward(self, x):
         for layer in self.layers:
@@ -156,7 +170,7 @@ class LLM2Rec(nn.Module):
                  llm_name,
                  d_model,
                  input_dim = 90,
-                 token_kernels=[3, 11, 21],
+                 token_kernels=[3, 7, 15],
                  reduce_ratio = 1,
                  patch_len = 20,
                  n_heads = 8,
@@ -181,19 +195,16 @@ class LLM2Rec(nn.Module):
         self.n_heads = n_heads
 
         # 0. Edit Prompt
-        be_prompt = (
-            f"<|start_prompt|>Role: An expert with profound knowledge and extensive practical experience in the field of communications. "
-            f"Task: Determine the specific actions of individuals in a given environment based on WiFi Channel State Information (CSI) signal sequences."       
-            # f"You need to comprehensively consider various factors such as the propagation characteristics and attenuation patterns of WiFi signals in different environments and under various action states of individuals."
+        # 0. Edit Prompt
+        self.be_prompt = (
+            f"<|start_prompt|>Task: Determine the specific actions of individuals in a given environment based on WiFi Channel State Information (CSI) signal sequences."      
             f"<|end_prompt|>"
-            f"<|start_input|>Information of CSI Signals:"
+            f"<|start_input|>Doppler spectrogram information of Channel State Information:"
         )
-        af_prompt = (
+        self.af_prompt = (
             f"<|end_output|>"
             f"<|start_output|>The current action of the character is"
         )
-        be_prompt = self.llm_tokenizer(be_prompt, return_tensors="pt").input_ids
-        af_prompt = self.llm_tokenizer(af_prompt, return_tensors="pt").input_ids
 
         # 1. Load LLM
         self.load_LLM()
@@ -210,6 +221,7 @@ class LLM2Rec(nn.Module):
                 nn.ReLU(inplace=True),
             )
         # 2.1 token_embedding is used for [B,T,C]
+        self.position_embed = PositionalEmbedding(self.d_llm)
         self.token_embeddings = nn.ModuleList(
             [TokenEmbedding(reduce_dim, d_model, token_kernel) for token_kernel in token_kernels]
         )
@@ -218,9 +230,7 @@ class LLM2Rec(nn.Module):
             nn.Dropout(dropout),
             RMSNorm(self.d_llm) if self.llm_name == 'llama' else nn.LayerNorm(self.d_llm) 
         )
-        # 2.2 patch_embedding is used for [B,C,T]
-        self.patch_embedding = PatchEmbedding(d_model, patch_len=patch_len, patch_stride=patch_len//2)
-        self.path_encoder = Encoder(self.d_model, self.n_heads)
+        self.CSI_Trans = TimeEncoder(self.d_llm, self.n_heads, 4)
 
         # 3. Add Extral token
         self.start_token = nn.Parameter(torch.zeros(1, 1, d_model), requires_grad=True)
@@ -279,6 +289,9 @@ class LLM2Rec(nn.Module):
         end_layer = start_layer + self.frozen_llm_layer
         assert end_layer <= self.llm_layers, "frozen layer should be less than total layer"
 
+        for param in self.llm_model.embed_tokens.parameters():
+            param.requires_grad = False
+
         for i, layer in enumerate(self.llm_model.layers):
             if i >= start_layer and i < end_layer:
                 for name, param in layer.named_parameters():
@@ -291,6 +304,9 @@ class LLM2Rec(nn.Module):
         end_layer = start_layer + self.frozen_llm_layer
         assert end_layer <= self.llm_layers, "frozen layer should be less than total layer"
         
+        for param in self.llm_model.wte.parameters():
+            param.requires_grad = False
+
         for param in self.llm_model.wpe.parameters():
             param.requires_grad = True
 
@@ -325,30 +341,25 @@ class LLM2Rec(nn.Module):
             conv_x.append(layer(x))
         x1 = torch.cat(conv_x, dim=-1)
         x1 = self.token_linear(x1)
+        x1 = self.CSI_Trans(self.position_embed(x1))
+
+        # 3. Reprograming
         if reprogramming:
             source_embeddings = self.mapping_layer(self.word_embeddings.permute(1, 0)).permute(1, 0)    
             x1 = self.reprogramming_layer(x1, source_embeddings, source_embeddings)               
         
         # x1 = torch.cat((x1, self.stop_token.expand(B, 1, -1)), dim=1)
-        x1 = torch.cat((be_prompt_embed, x1, af_prompt_embed), dim=1)
-
+        x1 = torch.cat((be_prompt_embed, x1, self.stop_token.expand(B, 1, -1)), dim=1)
+        
+        # 4. LLM Interaction
         x1 = self.llm_model(inputs_embeds=x1).last_hidden_state
         x1 = x1[:,-1]
 
         return self.head(x1)
-
-        '''
-        The Extral Method
-        CSI Data Shape: [B, C, T]->[B*C, L, Patch_len]->[B*L, C, d_model]
-        Calculate CSI in Every Block as:
-        1) [B*C, L, d_model]->[B*C, L, d_model] -- LLM Block forward
-        2) [B*C, L, d_model]->[B*L, C, d_mdoel] -- Reshape to calculate L-th C channel data
-        3) [B*L, C, d_model]->[B*L, C, d_model] -- Transformer Encoder
-        4) [B*L, C, d_model]->[B*C, L, d_model] -- Reshape to origin
-        '''
+    
     def predict(self, x, reprogramming=False):
         x_logits = self.forward(x, reprogramming=reprogramming)
-        pre_labels = torch.argmax(x_logits, dim=1)
+        pre_labels = torch.argmax(x_logits, dim=-1)
         return x_logits, pre_labels
 
 

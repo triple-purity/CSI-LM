@@ -145,7 +145,7 @@ def main():
         llm_name=args.llm_name,
         d_model=args.d_model,
         input_dim=args.input_dim,
-        token_kernel=args.token_kernel,
+        token_kernels=args.token_kernels,
         patch_len=args.patch_len,
         reduce_ratio=args.reduce_ratio,
         n_heads=args.n_heads,

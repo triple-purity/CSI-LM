@@ -2,6 +2,7 @@ import os
 import numpy as np
 from typing import List, Tuple, Optional
 
+from tqdm.auto import tqdm
 from sklearn.model_selection import train_test_split, StratifiedShuffleSplit
 
 

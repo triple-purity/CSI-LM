@@ -119,7 +119,7 @@ class CSI_Dataset(Dataset):
         try:
             origin_csi = sio.loadmat(data_file)
             origin_csi = origin_csi[self.data_key]
-            if len(origin_csi.shape) ==2:
+            if len(origin_csi.shape) ==2 and self.extract_method != 'dfs':
                 origin_csi = origin_csi.reshape(origin_csi.shape[0], self.antenna_num, -1)
         except FileNotFoundError:
             print("File not found: {}".format(data_file))
@@ -129,22 +129,35 @@ class CSI_Dataset(Dataset):
             abs_csi = np.abs(origin_csi)
             denoised_csi = DWT_Denoise(abs_csi, level=5, wavelet='sym8')
             resample_csi = resample_csi_sequence(denoised_csi, target_length=self.unified_length)
+            resample_csi = resample_csi.reshape(resample_csi.shape[0], -1)
             tensor_csi = torch.tensor(resample_csi, dtype=torch.float32)
             tensor_csi = data_norm(tensor_csi, self.norm_type)
             return tensor_csi, cur_label
         elif self.extract_method == 'csi-ratio':
+            """
             csi_ratio, antenna_index = calculate_csi_ratio(origin_csi)
             csi_ratio = np.concatenate((csi_ratio[:, :antenna_index, :], csi_ratio[:, antenna_index+1:, :]), axis=1)
-            angle_csi_ratio = np.angle(origin_csi)
-            angle_csi_ratio = phase_calibration(hampel_filter(angle_csi_ratio))
-            resample_csi = resample_csi_sequence(csi_ratio, target_length=self.unified_length)
+            angle_csi_ratio = np.angle(csi_ratio)
+            angle_csi_ratio = phase_calibration(hampel_filter(angle_csi_ratio))"
+            """
+            dwt_angle_csi = DWT_Denoise(origin_csi)
+            resample_csi = resample_csi_sequence(dwt_angle_csi, target_length=self.unified_length)
+            resample_csi = resample_csi.reshape(resample_csi.shape[0], -1)
             tensor_csi = torch.tensor(resample_csi, dtype=torch.float32)
             tensor_csi = data_norm(tensor_csi, self.norm_type)
             return tensor_csi, cur_label
         else:
             # extract doppler spectrum from csi data
-            doppler_spectrum, *_ = get_doppler_spectrum(origin_csi)
+            # resample_csi = resample_csi_sequence(origin_csi, target_length=self.unified_length)
+            # doppler_spectrum, *_ = get_doppler_spectrum(origin_csi)
+            doppler_spectrum = origin_csi
+            _, sample_index = doppler_spectrum.shape
+            if sample_index >= self.unified_length:
+                doppler_spectrum = doppler_spectrum[:, :self.unified_length]
+            else:
+                doppler_spectrum = np.concatenate([doppler_spectrum, np.zeros((doppler_spectrum.shape[0], self.unified_length-sample_index))], axis=1)
             tensor_dfs = torch.tensor(doppler_spectrum, dtype=torch.float32)
+            tensor_dfs = tensor_dfs.permute(1, 0)
             return tensor_dfs, cur_label
 
 
