@@ -100,7 +100,9 @@ class TimeEncoder(nn.Module):
                 self.layers.append(Encoder(embed_size, heads, head_dim, dropout))
 
     def forward(self, x):
+        print("TimeEncoder forward")
         for layer in self.layers:
+            print(x.shape)
             x = layer(x)
         return x
 
@@ -323,7 +325,6 @@ class LLM2Rec(nn.Module):
                 break
 
     def forward(self, x, reprogramming=False):
-        print(x.shape)
         B, T, C = x.shape
 
         # 0. Prompt Embeddings
@@ -351,8 +352,8 @@ class LLM2Rec(nn.Module):
             source_embeddings = self.mapping_layer(self.word_embeddings.permute(1, 0)).permute(1, 0)    
             x1 = self.reprogramming_layer(x1, source_embeddings, source_embeddings)               
         
-        x1 = torch.cat((x1, self.stop_token.expand(B, 1, -1)), dim=1)
-        # x1 = torch.cat((be_prompt_embed, x1), dim=1)
+        # x1 = torch.cat((x1, self.stop_token.expand(B, 1, -1)), dim=1)
+        x1 = torch.cat((be_prompt_embed, x1, self.stop_token.expand(B, 1, -1)), dim=1)
 
         # 4. LLM Interaction
         x1 = self.llm_model(inputs_embeds=x1).last_hidden_state
