@@ -244,7 +244,7 @@ class LLM2Rec(nn.Module):
         self.vocab_size = self.word_embeddings.shape[0] # 获得词表大小
         self.num_tokens = 1000 
         self.mapping_layer = nn.Linear(self.vocab_size, self.num_tokens)
-        self.reprogramming_layer = ReprogrammingLayer(self.d_model, self.n_heads, self.d_llm)
+        self.reprogramming_layer = ReprogrammingLayer(self.d_llm, self.n_heads, self.d_llm)
 
         # 5.Classifier Head
         self.head = nn.Sequential(
@@ -351,7 +351,7 @@ class LLM2Rec(nn.Module):
             x1 = self.reprogramming_layer(x1, source_embeddings, source_embeddings)               
         
         # x1 = torch.cat((x1, self.stop_token.expand(B, 1, -1)), dim=1)
-        x1 = torch.cat((be_prompt_embed, x1), dim=1)
+        # x1 = torch.cat((be_prompt_embed, x1), dim=1)
 
         # 4. LLM Interaction
         x1 = self.llm_model(inputs_embeds=x1).last_hidden_state
