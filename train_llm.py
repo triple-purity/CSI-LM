@@ -41,6 +41,7 @@ def get_args_parser():
     parser.add_argument('--d_model', default=1024, type=int)
     parser.add_argument('--input_dim', default=90, type=int)
     parser.add_argument('--token_kernels', default=[5, 11, 21], type=int, nargs='+')
+    parser.add_argument('--trans_layer', default=4, type=int)
     parser.add_argument('--reduce_ratio', default=1, type=int)
     parser.add_argument('--patch_len', default=12, type=int)
     parser.add_argument('--n_heads', default=8, type=int)
@@ -173,6 +174,7 @@ def main():
         d_model=args.d_model,
         input_dim=args.input_dim,
         token_kernels=args.token_kernels,
+        trans_layer=args.trans_layer,
         patch_len=args.patch_len,
         reduce_ratio=args.reduce_ratio,
         n_heads=args.n_heads,

@@ -171,6 +171,7 @@ class LLM2Rec(nn.Module):
                  d_model,
                  input_dim = 90,
                  token_kernels=[3, 7, 15],
+                 trans_layer = 4,
                  reduce_ratio = 1,
                  patch_len = 20,
                  n_heads = 8,
@@ -191,6 +192,7 @@ class LLM2Rec(nn.Module):
         self.d_model = d_model
         
         self.patch_len = patch_len
+        self.trans_layer = trans_layer
         self.reduce_ratio = reduce_ratio
         self.n_heads = n_heads
 
@@ -232,7 +234,7 @@ class LLM2Rec(nn.Module):
             nn.Dropout(dropout),
             RMSNorm(self.d_llm) if self.llm_name == 'llama' else nn.LayerNorm(self.d_llm) 
         )
-        self.CSI_Trans = TimeEncoder(self.d_llm, self.n_heads, 4)
+        self.CSI_Trans = TimeEncoder(self.d_llm, self.n_heads, self.trans_layer)
 
         # 3. Add Extral token
         # self.start_token = nn.Parameter(torch.zeros(1, 1, self.d_llm), requires_grad=True)
@@ -371,6 +373,7 @@ def build_LLM2Rec(
         d_model,
         input_dim = 90,
         token_kernels=[3, 11, 31],
+        trans_layer = 4,
         reduce_ratio = 1,
         patch_len = 20,
         n_heads=8,
@@ -386,6 +389,7 @@ def build_LLM2Rec(
             d_model=d_model,
             input_dim=input_dim,
             token_kernels=token_kernels,
+            trans_layer=trans_layer,
             reduce_ratio = reduce_ratio,
             patch_len = patch_len,
             n_heads=n_heads,
