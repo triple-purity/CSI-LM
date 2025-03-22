@@ -222,11 +222,13 @@ class LLM2Rec(nn.Module):
             )
         # 2.1 token_embedding is used for [B,T,C]
         self.position_embed = PositionalEmbedding(self.d_llm)
+        kernel_dims = [(((reduce_dim*kernel)//2),kernel) for kernel in token_kernels]
         self.token_embeddings = nn.ModuleList(
-            [TokenEmbedding(reduce_dim, d_model, token_kernel) for token_kernel in token_kernels]
+            [TokenEmbedding(reduce_dim, dim, kernel) for dim, kernel in kernel_dims]
         )
         self.token_linear = nn.Sequential(
-            nn.Linear(d_model*len(token_kernels), self.d_llm),
+            nn.Linear(sum([item for item,_ in kernel_dims]), self.d_llm),
+            nn.GELU(),
             nn.Dropout(dropout),
             RMSNorm(self.d_llm) if self.llm_name == 'llama' else nn.LayerNorm(self.d_llm) 
         )
