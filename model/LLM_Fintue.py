@@ -323,6 +323,7 @@ class LLM2Rec(nn.Module):
                 break
 
     def forward(self, x, reprogramming=False):
+        print(x.shape)
         B, T, C = x.shape
 
         # 0. Prompt Embeddings
