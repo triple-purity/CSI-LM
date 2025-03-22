@@ -351,7 +351,7 @@ class LLM2Rec(nn.Module):
             source_embeddings = self.mapping_layer(self.word_embeddings.permute(1, 0)).permute(1, 0)    
             x1 = self.reprogramming_layer(x1, source_embeddings, source_embeddings)               
         
-        # x1 = torch.cat((x1, self.stop_token.expand(B, 1, -1)), dim=1)
+        x1 = torch.cat((x1, self.stop_token.expand(B, 1, -1)), dim=1)
         # x1 = torch.cat((be_prompt_embed, x1), dim=1)
 
         # 4. LLM Interaction
