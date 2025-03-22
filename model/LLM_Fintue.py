@@ -112,27 +112,32 @@ class ReprogrammingLayer(nn.Module):
         super(ReprogrammingLayer, self).__init__()
         self.n_heads = n_heads
         d_keys = d_keys or (d_model // n_heads)
-
+        
+        self.target_norm = nn.LayerNorm(d_model)
         self.query_projection = nn.Linear(d_model, d_keys * n_heads)
+
+        self.source_norm = nn.LayerNorm(d_llm)
         self.key_projection = nn.Linear(d_llm, d_keys * n_heads)
         self.value_projection = nn.Linear(d_llm, d_keys * n_heads)
         self.out_projection = nn.Linear(d_keys * n_heads, d_llm)
         self.dropout = nn.Dropout(attention_dropout)
 
-    def forward(self, target_embedding, source_embedding, value_embedding):
+    def forward(self, target_embedding, source_embedding, value_embedding, add_origin=False):
         B, L, _ = target_embedding.shape
         S, _ = source_embedding.shape
         H = self.n_heads
 
-        target_embedding = self.query_projection(target_embedding).view(B, L, H, -1)
-        source_embedding = self.key_projection(source_embedding).view(S, H, -1)
-        value_embedding = self.value_projection(value_embedding).view(S, H, -1)
+        target_embedding = self.query_projection(self.target_norm(target_embedding)).view(B, L, H, -1)
+        source_embedding = self.key_projection(self.source_norm(source_embedding)).view(S, H, -1)
+        value_embedding = self.value_projection(self.source_norm(value_embedding)).view(S, H, -1)
 
         out = self.reprogramming(target_embedding, source_embedding, value_embedding)
-
         out = out.reshape(B, L, -1)
-
-        return self.out_projection(out)
+        if add_origin:
+            out = out + self.out_projection(out)
+        else:
+            out = self.out_projection(out)
+        return out
 
     def reprogramming(self, target_embedding, source_embedding, value_embedding):
         B, L, H, E = target_embedding.shape
@@ -244,7 +249,7 @@ class LLM2Rec(nn.Module):
         self.word_embeddings = self.llm_model.get_input_embeddings().weight # 获得权重
         self.word_embeddings.requires_grad = False
         self.vocab_size = self.word_embeddings.shape[0] # 获得词表大小
-        self.num_tokens = 500 
+        self.num_tokens = 1000 
         self.mapping_layer = nn.Linear(self.vocab_size, self.num_tokens)
         self.reprogramming_layer = ReprogrammingLayer(self.d_llm, self.n_heads, self.d_llm)
 
@@ -324,7 +329,7 @@ class LLM2Rec(nn.Module):
             else:
                 break
 
-    def forward(self, x, reprogramming=False):
+    def forward(self, x, reprogramming=False, add_origin=False):
         B, T, C = x.shape
 
         # 0. Prompt Embeddings
@@ -350,7 +355,7 @@ class LLM2Rec(nn.Module):
         # 3. Reprograming
         if reprogramming:
             source_embeddings = self.mapping_layer(self.word_embeddings.permute(1, 0)).permute(1, 0)    
-            x1 = self.reprogramming_layer(x1, source_embeddings, source_embeddings)               
+            x1 = self.reprogramming_layer(x1, source_embeddings, source_embeddings, add_origin)               
         
         # x1 = torch.cat((x1, self.stop_token.expand(B, 1, -1)), dim=1)
         x1 = torch.cat((be_prompt_embed, x1, self.stop_token.expand(B, 1, -1)), dim=1)
@@ -361,8 +366,8 @@ class LLM2Rec(nn.Module):
 
         return self.head(x1)
     
-    def predict(self, x, reprogramming=False):
-        x_logits = self.forward(x, reprogramming=reprogramming)
+    def predict(self, x, reprogramming=False, add_origin=False):
+        x_logits = self.forward(x, reprogramming=reprogramming, add_origin=add_origin)
         pre_labels = torch.argmax(x_logits, dim=-1)
         return x_logits, pre_labels
 
