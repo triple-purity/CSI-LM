@@ -100,9 +100,7 @@ class TimeEncoder(nn.Module):
                 self.layers.append(Encoder(embed_size, heads, head_dim, dropout))
 
     def forward(self, x):
-        print("TimeEncoder forward")
         for layer in self.layers:
-            print(x.shape)
             x = layer(x)
         return x
 
