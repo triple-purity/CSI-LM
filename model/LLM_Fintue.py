@@ -235,8 +235,8 @@ class LLM2Rec(nn.Module):
         self.CSI_Trans = TimeEncoder(self.d_llm, self.n_heads, 4)
 
         # 3. Add Extral token
-        self.start_token = nn.Parameter(torch.zeros(1, 1, d_model), requires_grad=True)
-        self.stop_token = nn.Parameter(torch.zeros(1, 1, d_model), requires_grad=True)
+        # self.start_token = nn.Parameter(torch.zeros(1, 1, self.d_llm), requires_grad=True)
+        self.stop_token = nn.Parameter(torch.zeros(1, 1, self.d_llm), requires_grad=True)
 
         # 4. Reprogramming Layer
         self.word_embeddings = self.llm_model.get_input_embeddings().weight # 获得权重
@@ -352,7 +352,7 @@ class LLM2Rec(nn.Module):
         
         # x1 = torch.cat((x1, self.stop_token.expand(B, 1, -1)), dim=1)
         x1 = torch.cat((be_prompt_embed, x1, self.stop_token.expand(B, 1, -1)), dim=1)
-        
+
         # 4. LLM Interaction
         x1 = self.llm_model(inputs_embeds=x1).last_hidden_state
         x1 = x1[:,-1]
