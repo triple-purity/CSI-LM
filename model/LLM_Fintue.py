@@ -81,10 +81,10 @@ class Encoder(nn.Module):
 class DowmLayer(nn.Module):
     def __init__(self, embed_size):
         super(DowmLayer, self).__init__()
-        self.layers = nn.Conv1d(embed_size, embed_size, kernel_size=3, padding=1, stride=2, bias=False)
+        self.layer = nn.Conv1d(embed_size, embed_size, kernel_size=3, padding=1, stride=2, bias=False)
 
     def forward(self, x):
-        x = self.layers(x)
+        x = self.layer(x.permute(0, 2, 1)).permute(0, 2, 1)
         return x
 
 
