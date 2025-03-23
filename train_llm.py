@@ -104,7 +104,7 @@ def train_model(model, train_data, start_epoch, epochs, optimizer: dict, schedul
             optimizer['action'].step()
 
             bar.set_description(
-                desc = f'Epoch {epoch}/{epochs}: Avg Action Loss: {avg_action_loss:.4f}|| Avg Domain Loss: {domain_loss:.4f}'
+                desc = f'Epoch {epoch}/{epochs}: Avg Action Loss: {avg_action_loss:.4f}|| Avg Domain Loss: {avg_domain_loss:.4f}'
             )
 
             #正确率
