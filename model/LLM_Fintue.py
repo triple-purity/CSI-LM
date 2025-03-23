@@ -334,8 +334,8 @@ class LLM2Rec(nn.Module):
 
         # 3. LLM Interaction
         x1 = self.llm_model(inputs_embeds=x1).last_hidden_state
-        x1 = x1[:,-1]
-        return x1
+        output = x1[:,-1]
+        return output
 
 def build_LLM2Rec(
         llm_name, 
