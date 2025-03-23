@@ -76,9 +76,9 @@ class CSI_GAN(nn.Module):
 
     def forward(self, x):
         feature = self.feature_extracter(x)
-        action_logits = self.action_net(feature.clone())
+        action_logits = self.action_net(feature)
 
-        domain_input = torch.concat([feature, action_logits.detach()], dim=-1)
+        domain_input = torch.concat([feature.clone(), action_logits.detach()], dim=-1)
         domain_logits = self.domain_net(domain_input)
 
         return action_logits, domain_logits
