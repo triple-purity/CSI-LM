@@ -78,7 +78,7 @@ def train_model(model, train_data, start_epoch, epochs, optimizer: dict, schedul
 
         pred_labels = []
         targets = []
-        avg_loss = 0
+        avg_action_loss, avg_domain_loss = 0, 0
         bar = tqdm(enumerate(train_data), total=len(train_data))
         for i,(inputs, action_labels, domain_labels) in bar:
             inputs = inputs.to(device)
@@ -87,26 +87,32 @@ def train_model(model, train_data, start_epoch, epochs, optimizer: dict, schedul
 
             action_logits, domain_logits = model(inputs)
 
+            # Train Domain Recognition
             if (i+1)%args.calculate_domain_iter == 0:
-                loss = args.beta * cls_loss(domain_logits, domain_labels)
+                domain_loss = args.beta * cls_loss(domain_logits, domain_labels)
+                pre_iter = i//args.calculate_domain_iter
+                avg_domain_loss = (avg_domain_loss * pre_iter + domain_loss.item())/(pre_iter+1)
                 optimizer['domain'].zero_grad()
-                loss.backward()
+                domain_loss.backward()
                 optimizer['domain'].step()
 
-            loss = cls_loss(action_logits, action_labels) + args.alpha * DomainDeception(domain_logits, domain_labels)
+            # Train Action Recognition 
+            action_loss = cls_loss(action_logits, action_labels) + args.alpha * DomainDeception(domain_logits, domain_labels)
+            avg_action_loss = (avg_action_loss * i + action_loss.item())/(i+1)
             optimizer['action'].zero_grad()
-            loss.backward()
+            action_loss.backward()
             optimizer['action'].step()
-            
+
+            bar.set_description(
+                desc = f'Epoch {epoch}/{epochs}: Avg Action Loss: {avg_action_loss:.4f}|| Avg Domain Loss: {domain_loss:.4f}'
+            )
+
             #正确率
             pred_label = torch.argmax(action_logits, dim=-1)
             pred_labels.append(pred_label.cpu())
             targets.append(action_labels.cpu())
-
-            avg_loss = (avg_loss * i + loss.item())/(i+1)
-            bar.set_description(desc = f'Epoch {epoch}/{epochs}: model classification loss: {avg_loss:.4f}')
         
-        Avg_Loss.append(avg_loss)
+        Avg_Loss.append(avg_action_loss)
         preds = torch.cat(pred_labels).numpy()
         targets = torch.cat(targets).numpy()
         print(f"Train Time the Accuracy Score of Model is:{accuracy_score(targets, preds)}")
