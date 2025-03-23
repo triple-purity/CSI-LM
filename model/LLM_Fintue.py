@@ -122,7 +122,7 @@ class ReprogrammingLayer(nn.Module):
         self.out_projection = nn.Linear(d_keys * n_heads, d_llm)
         self.dropout = nn.Dropout(attention_dropout)
 
-    def forward(self, target_embedding, source_embedding, value_embedding, add_origin=False):
+    def forward(self, target_embedding, source_embedding, value_embedding):
         B, L, _ = target_embedding.shape
         S, _ = source_embedding.shape
         H = self.n_heads
@@ -133,10 +133,7 @@ class ReprogrammingLayer(nn.Module):
 
         out = self.reprogramming(target_embedding, source_embedding, value_embedding)
         out = out.reshape(B, L, -1)
-        if add_origin:
-            out = out + self.out_projection(out)
-        else:
-            out = self.out_projection(out)
+        out = self.out_projection(out)
         return out
 
     def reprogramming(self, target_embedding, source_embedding, value_embedding):
@@ -151,6 +148,9 @@ class ReprogrammingLayer(nn.Module):
 
         return reprogramming_embedding
 
+# 3. Final Extract Global Feature
+
+# 4. RMSNorm Layer for Llama
 class RMSNorm(nn.Module):
     def __init__(self, hidden_size, eps=1e-6):
         super().__init__()
@@ -171,19 +171,18 @@ class RMSNorm(nn.Module):
 # 3. Network Based LLM
 class LLM2Rec(nn.Module):
     def __init__(self,
-                 num_classes,
                  llm_name,
                  d_model,
                  input_dim = 90,
-                 token_kernels=[3, 7, 15],
-                 trans_layer = 4,
+                 token_kernels=[5, 11, 21],
+                 trans_layer = 3,
                  reduce_ratio = 1,
-                 patch_len = 20,
                  n_heads = 8,
                  llm_layers=12,
                  frozen_llm_layer=8,
                  batch_seq_len=2000, 
-                 dropout = 0.1
+                 dropout = 0.1,
+                 reprogramming = False,
                 ):
         super(LLM2Rec, self).__init__()
         # LLM Configs
@@ -191,47 +190,32 @@ class LLM2Rec(nn.Module):
         self.llm_layers = llm_layers
         self.frozen_llm_layer = frozen_llm_layer
         # CSI 
-        self.num_classes = num_classes
         self.seq_len = batch_seq_len
         self.input_dim = input_dim
         self.d_model = d_model
         
-        self.patch_len = patch_len
         self.trans_layer = trans_layer
         self.reduce_ratio = reduce_ratio
         self.n_heads = n_heads
 
-        # 0. Edit Prompt
+        self.reprogramming = reprogramming
+
         # 0. Edit Prompt
         self.be_prompt = (
             f"<|start_prompt|>Task: Determine the specific actions of individuals in a given environment based on WiFi Channel State Information (CSI) signal sequences."      
             f"<|end_prompt|>"
             f"<|start_input|>Doppler spectrogram information of Channel State Information:"
         )
-        self.af_prompt = (
-            f"<|end_output|>"
-            f"<|start_output|>The current action of the character is"
-        )
 
         # 1. Load LLM
         self.load_LLM()
         
         # 2. CSI Process
-        self.is_reduce_time = reduce_ratio != 1
-        reduce_dim = self.input_dim*(reduce_ratio*2) if self.is_reduce_time else self.input_dim
-        if self.is_reduce_time:
-            self.conv_reduce = nn.Sequential(
-                nn.Conv1d(self.input_dim, reduce_dim, 
-                          kernel_size=reduce_ratio, stride=reduce_ratio, 
-                          bias=True),
-                nn.BatchNorm1d(reduce_dim),
-                nn.ReLU(inplace=True),
-            )
         # 2.1 token_embedding is used for [B,T,C]
         self.position_embed = PositionalEmbedding(self.d_llm)
-        kernel_dims = [(((reduce_dim*kernel)//2),kernel) for kernel in token_kernels]
+        kernel_dims = [(((input_dim*kernel)//2),kernel) for kernel in token_kernels]
         self.token_embeddings = nn.ModuleList(
-            [TokenEmbedding(reduce_dim, dim, kernel) for dim, kernel in kernel_dims]
+            [TokenEmbedding(input_dim, dim, kernel) for dim, kernel in kernel_dims]
         )
         self.token_linear = nn.Sequential(
             nn.Linear(sum([item for item,_ in kernel_dims]), self.d_llm),
@@ -242,22 +226,17 @@ class LLM2Rec(nn.Module):
         self.CSI_Trans = TimeEncoder(self.d_llm, self.n_heads, self.trans_layer)
 
         # 3. Add Extral token
-        # self.start_token = nn.Parameter(torch.zeros(1, 1, self.d_llm), requires_grad=True)
-        self.stop_token = nn.Parameter(torch.zeros(1, 1, self.d_llm), requires_grad=True)
+        self.cls_token = nn.Parameter(torch.zeros(1, 1, self.d_llm), requires_grad=True)
 
         # 4. Reprogramming Layer
-        self.word_embeddings = self.llm_model.get_input_embeddings().weight # 获得权重
-        self.word_embeddings.requires_grad = False
-        self.vocab_size = self.word_embeddings.shape[0] # 获得词表大小
-        self.num_tokens = 1000 
-        self.mapping_layer = nn.Linear(self.vocab_size, self.num_tokens)
-        self.reprogramming_layer = ReprogrammingLayer(self.d_llm, self.n_heads, self.d_llm)
+        if reprogramming:
+            self.word_embeddings = self.llm_model.get_input_embeddings().weight # 获得权重
+            self.word_embeddings.requires_grad = False
+            self.vocab_size = self.word_embeddings.shape[0] # 获得词表大小
+            self.num_tokens = 1000 
+            self.mapping_layer = nn.Linear(self.vocab_size, self.num_tokens)
+            self.reprogramming_layer = ReprogrammingLayer(self.d_llm, self.n_heads, self.d_llm)
 
-        # 5.Classifier Head
-        self.head = nn.Sequential(
-            nn.Linear(self.d_llm, self.num_classes),
-            nn.Dropout(dropout),
-        )
 
     def load_LLM(self):
         assert self.llm_name in llama_names or self.llm_name in gpt_names, f"LLM model {self.llm_name} is not defined"
@@ -329,22 +308,16 @@ class LLM2Rec(nn.Module):
             else:
                 break
 
-    def forward(self, x, reprogramming=False, add_origin=False):
+    def forward(self, x):
         B, T, C = x.shape
 
         # 0. Prompt Embeddings
+        """
         be_prompt = self.llm_tokenizer(self.be_prompt, return_tensors="pt").input_ids
-        af_prompt = self.llm_tokenizer(self.af_prompt, return_tensors="pt").input_ids
         be_prompt_embed = self.llm_model.get_input_embeddings()(be_prompt.to(x.device)).expand((B, -1, -1))
-        af_prompt_embed = self.llm_model.get_input_embeddings()(af_prompt.to(x.device)).expand((B, -1, -1))
+        """
 
-        # 1. Reduce Time
-        if self.is_reduce_time:
-            x = x.permute(0, 2, 1)
-            x = self.conv_reduce(x)
-            x = x.permute(0, 2, 1)
-
-        # 2. Token Embedding
+        # 1. Token Embedding
         conv_x = []
         for layer in self.token_embeddings:
             conv_x.append(layer(x))
@@ -352,55 +325,45 @@ class LLM2Rec(nn.Module):
         x1 = self.token_linear(x1)
         x1 = self.CSI_Trans(self.position_embed(x1))
 
-        # 3. Reprograming
-        if reprogramming:
+        # 2. Reprograming
+        if self.reprogramming:
             source_embeddings = self.mapping_layer(self.word_embeddings.permute(1, 0)).permute(1, 0)    
-            x1 = self.reprogramming_layer(x1, source_embeddings, source_embeddings, add_origin)               
+            x1 = self.reprogramming_layer(x1, source_embeddings, source_embeddings)               
         
-        # x1 = torch.cat((x1, self.stop_token.expand(B, 1, -1)), dim=1)
-        x1 = torch.cat((be_prompt_embed, x1, self.stop_token.expand(B, 1, -1)), dim=1)
+        x1 = torch.cat((x1, self.cls_token.expand(B, 1, -1)), dim=1)
 
-        # 4. LLM Interaction
+        # 3. LLM Interaction
         x1 = self.llm_model(inputs_embeds=x1).last_hidden_state
         x1 = x1[:,-1]
-
-        return self.head(x1)
-    
-    def predict(self, x, reprogramming=False, add_origin=False):
-        x_logits = self.forward(x, reprogramming=reprogramming, add_origin=add_origin)
-        pre_labels = torch.argmax(x_logits, dim=-1)
-        return x_logits, pre_labels
-
+        return x1
 
 def build_LLM2Rec(
-        num_classes,
         llm_name, 
         d_model,
         input_dim = 90,
-        token_kernels=[3, 11, 31],
+        token_kernels=[5, 11, 21],
         trans_layer = 4,
         reduce_ratio = 1,
-        patch_len = 20,
         n_heads=8,
         llm_layers=12,  
         start_layer=0,
         frozen_llm_layer=10,
         batch_seq_len=2000,
-        lora=False, 
+        lora=False,
+        reprogramming=False, 
     ):
     model = LLM2Rec(
-            num_classes=num_classes,
             llm_name=llm_name,
             d_model=d_model,
             input_dim=input_dim,
             token_kernels=token_kernels,
             trans_layer=trans_layer,
             reduce_ratio = reduce_ratio,
-            patch_len = patch_len,
             n_heads=n_heads,
             llm_layers=llm_layers,
             frozen_llm_layer=frozen_llm_layer,
             batch_seq_len=batch_seq_len,
+            reprogramming=reprogramming,
         )
     if llm_name in llama_names:
         model.frozen_llama(start_layer)

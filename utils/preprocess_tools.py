@@ -69,19 +69,17 @@ def hampel_filter(data, window_size=5, n_sigmas=3):
     """
     filtered_data = np.copy(data)
     num_packets, num_antennas, num_subcarriers = data.shape
-    
+    half_window = (window_size-1)//2
     for ant in range(num_antennas):
         for sc in range(num_subcarriers):
             sequence = data[:, ant, sc]
-            median = np.median(sequence)
-            deviation = np.abs(sequence - median)
-            mad = np.median(deviation)
-            # 计算阈值
-            threshold = n_sigmas * mad
-            # 检测异常值
-            outliers = deviation > threshold
-            # 替换异常值为中位数
-            filtered_data[outliers, ant, sc] = median
+            for i in range(half_window, num_packets-half_window):
+                window = sequence[max(0, i-window_size//2) : min(num_packets, i+window_size//2+1)]
+                median = np.median(window)
+                mad = np.median(np.abs(window - median))
+                if np.abs(sequence[i] - median) > n_sigmas * mad:
+                    filtered_data[i, ant,sc] = median
+    
     return filtered_data
 
 def phase_calibration(phase_data, epsilon=0.3):
@@ -269,28 +267,6 @@ def DWT_Denoise(csi_data, wavelet='db4', level=None, threshold_mode='soft', mode
                 )
     
     return csi_denoised
-
-# 5. 短时傅里叶变换
-def apply_stft(pca_data, fs=1.0, window='hann', nperseg=256, noverlap=None):
-    """
-    对降维后的数据进行短时傅里叶变换。
-    :param pca_data: 降维后的数据，形状为 (num_packets, num_antennas, n_components)
-    :param fs: 采样频率
-    :param window: 窗口函数
-    :param nperseg: 每个分段的长度
-    :param noverlap: 分段之间的重叠长度
-    :return: STFT结果，形状为 (num_antennas, n_components, n_freqs, n_segments)
-    """
-    _, num_antennas, n_components = pca_data.shape
-    stft_results = []
-
-    for ant in range(num_antennas):
-        for comp in range(n_components):
-            f, t, Zxx = stft(pca_data[:, ant, comp], fs=fs, window=window, nperseg=nperseg, noverlap=noverlap)
-            stft_results.append(Zxx)
-    
-    stft_results = np.array(stft_results).reshape(num_antennas, n_components, *Zxx.shape)
-    return f, t, stft_results
 
 # 7. Extract DFS From CSI
 def dfs_pca(X, n_components=None, centered=True, algorithm='svd',
