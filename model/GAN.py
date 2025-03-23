@@ -17,6 +17,7 @@ class RecNet(nn.Module):
 
         self.head = nn.Sequential(
             nn.Linear(embed_size, num_classes),
+            nn.Dropout(dropout),
         )
     def forward(self, x):
         x = self.dense(x)
