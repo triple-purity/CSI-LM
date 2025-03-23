@@ -70,7 +70,8 @@ def train_model(model, train_data, start_epoch, epochs, optimizer: dict, schedul
     cls_loss = nn.CrossEntropyLoss()
     Avg_Loss = list()
 
-
+    torch.autograd.set_detect_anomaly(True) 
+    
     for epoch in range(start_epoch, epochs):
         print('*** Start TRAINING Model ***')
         model.train()
