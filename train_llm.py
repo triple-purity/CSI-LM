@@ -92,7 +92,7 @@ def train_model(model, train_data, start_epoch, epochs, optimizer: dict, schedul
                 domain_loss = args.beta * cls_loss(domain_logits, domain_labels)
                 pre_iter = i//args.calculate_domain_iter
                 avg_domain_loss = (avg_domain_loss * pre_iter + domain_loss.item())/(pre_iter+1)
-                domain_loss.backward()
+                domain_loss.backward(retain_graph=True)
                 optimizer['domain'].step()
                 optimizer['domain'].zero_grad()
 
