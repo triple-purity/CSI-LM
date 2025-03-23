@@ -87,22 +87,23 @@ def train_model(model, train_data, start_epoch, epochs, optimizer: dict, schedul
             domain_labels = domain_labels.to(device)
 
             action_logits, domain_logits = model(inputs)
-
+            
             # Train Action Recognition 
             action_loss = cls_loss(action_logits, action_labels) + args.alpha * DomainDeception(domain_logits, domain_labels)
             avg_action_loss = (avg_action_loss * i + action_loss.item())/(i+1)
             action_loss.backward(retain_graph=True)
-            optimizer['action'].step()
-            optimizer['action'].zero_grad()
 
             # Train Domain Recognition
-            if (i+1)%args.calculate_domain_iter == 0:
+            if epoch<1 or (i+1)%args.calculate_domain_iter == 0:
                 domain_loss = args.beta * cls_loss(domain_logits, domain_labels)
                 pre_iter = i//args.calculate_domain_iter
                 avg_domain_loss = (avg_domain_loss * pre_iter + domain_loss.item())/(pre_iter+1)
-                domain_loss.backward()
+                domain_loss.backward(retain_graph=True)
                 optimizer['domain'].step()
-                optimizer['domain'].zero_grad()
+            optimizer['action'].step()
+            optimizer['domain'].zero_grad()
+            optimizer['action'].zero_grad()
+
 
             bar.set_description(
                 desc = f'Epoch {epoch}/{epochs}: Avg Action Loss: {avg_action_loss:.4f}|| Avg Domain Loss: {avg_domain_loss:.4f}'
