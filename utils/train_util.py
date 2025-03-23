@@ -13,5 +13,5 @@ def DomainDeception(domain_logits: torch.tensor, domain_labels: torch.tensor):
     domain_num = domain_logits.shape[1]
     soft_domain_logits = F.log_softmax(domain_logits, dim=1)
     domain_labels = F.one_hot(domain_labels, domain_num)
-    domain_loss = F.kl_div(soft_domain_logits, domain_labels, reduction='batchmean')
+    domain_loss = torch.sum(soft_domain_logits * domain_labels) / domain_labels.shape[0]
     return domain_loss
