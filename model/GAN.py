@@ -17,7 +17,6 @@ class RecNet(nn.Module):
 
         self.head = nn.Sequential(
             nn.Linear(embed_size, num_classes),
-            nn.Dropout(dropout),
         )
     def forward(self, x):
         x = self.dense(x)
@@ -79,7 +78,7 @@ class CSI_GAN(nn.Module):
         x = self.feature_extracter(x)
         action_logits = self.action_net(x)
         
-        domain_input = torch.concat([x, action_logits], dim=-1)
+        domain_input = torch.concat([x, action_logits.detach()], dim=-1)
         domain_logits = self.domain_net(domain_input)
 
         return action_logits, domain_logits
