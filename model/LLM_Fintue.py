@@ -84,8 +84,10 @@ class DowmLayer(nn.Module):
         self.downlayer = nn.Conv1d(embed_size, embed_size, kernel_size=3, padding=1, stride=2, bias=False)
 
     def forward(self, x):
-        x = self.downlayer(x.permute(0, 2, 1)).permute(0, 2, 1)
-        return x
+        x_permuted = x.permute(0, 2, 1)
+        x_downsampled = self.downlayer(x_permuted)
+        x_out = x_downsampled.permute(0, 2, 1)
+        return x_out
 
 
 class TimeEncoder(nn.Module):
