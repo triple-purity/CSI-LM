@@ -25,10 +25,10 @@ def get_csi_data(data_path: str, select_domains: List[str]):
         files = os.listdir(user_path)
         for file_name in files:
             all_files.append(os.path.join(user_path, file_name))
-            elements, gesture_label, domain_labels = name_split(file_name, select_domains)
+            elements, gesture_label, domain_label = name_split(file_name, select_domains)
             feas.append(elements)
             gesture_labels.append(gesture_label)
-            domain_labels.append(domain_labels)
+            domain_labels.append(domain_label)
 
     all_files, feas= np.array(all_files), np.array(feas) 
     gesture_labels, domain_labels = np.array(gesture_labels), np.array(domain_labels)
