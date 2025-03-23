@@ -116,7 +116,7 @@ class CSI_Dataset(Dataset):
         '''
         Returns the data and label at the given index.
         '''
-        gestur_label = int(self.action_labels)-1
+        gestur_label = int(self.action_labels[idx])-1
         domain_label = int(self.domain_labels[idx])
         data_file = self.data_files[idx]
         try:
