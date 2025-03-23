@@ -78,8 +78,8 @@ class CSI_GAN(nn.Module):
         x = self.feature_extracter(x)
         action_logits = self.action_net(x)
         
-        x = torch.concat([x, action_logits], dim=-1)
-        domain_logits = self.domain_net(x)
+        domain_imput = torch.concat([x, action_logits], dim=-1)
+        domain_logits = self.domain_net(domain_imput)
 
         return action_logits, domain_logits
 

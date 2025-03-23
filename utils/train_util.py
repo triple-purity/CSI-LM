@@ -11,7 +11,7 @@ from sklearn.metrics import accuracy_score
 # 损失函数
 def DomainDeception(domain_logits: torch.tensor, domain_labels: torch.tensor):
     domain_num = domain_logits.shape[1]
-    domain_logits = F.log_softmax(domain_logits, dim=1)
+    soft_domain_logits = F.log_softmax(domain_logits, dim=1)
     domain_labels = F.one_hot(domain_labels, domain_num)
-    domain_loss = torch.sum(domain_logits * domain_labels) / domain_labels.shape[0]
+    domain_loss = torch.sum(soft_domain_logits * domain_labels) / domain_labels.shape[0]
     return domain_loss
