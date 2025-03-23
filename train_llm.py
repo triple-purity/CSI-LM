@@ -61,7 +61,7 @@ def get_args_parser():
     parser.add_argument('--label_smooth_rate', default=0.02, type=float)
     parser.add_argument('--calculate_domain_iter', default=5, type=bool)
     parser.add_argument('--alpha', default=0.1, type=float)
-    parser.add_argument('--beta', default=0.05, type=float)
+    parser.add_argument('--beta', default=1, type=float)
     args = parser.parse_args()
     return args
 
@@ -88,18 +88,17 @@ def train_model(model, train_data, start_epoch, epochs, optimizer: dict, schedul
 
             action_logits, domain_logits = model(inputs)
             
+            # Train Domain Recognition
+            domain_loss = args.beta * cls_loss(domain_logits, domain_labels)
+            pre_iter = i//args.calculate_domain_iter
+            avg_domain_loss = (avg_domain_loss * pre_iter + domain_loss.item())/(pre_iter+1)
+            domain_loss.backward(retain_graph=True)
             # Train Action Recognition 
-            action_loss = cls_loss(action_logits, action_labels) + args.alpha * DomainDeception(domain_logits, domain_labels)
+            action_loss = cls_loss(action_logits, action_labels) + args.alpha * (1-cls_loss(domain_logits, domain_labels))
             avg_action_loss = (avg_action_loss * i + action_loss.item())/(i+1)
             action_loss.backward(retain_graph=True)
 
-            # Train Domain Recognition
-            if (i+1)%args.calculate_domain_iter == 0:
-                domain_loss = args.beta * cls_loss(domain_logits, domain_labels)
-                pre_iter = i//args.calculate_domain_iter
-                avg_domain_loss = (avg_domain_loss * pre_iter + domain_loss.item())/(pre_iter+1)
-                domain_loss.backward(retain_graph=True)
-                optimizer['domain'].step()
+            optimizer['domain'].step()
             optimizer['action'].step()
             optimizer['domain'].zero_grad()
             optimizer['action'].zero_grad()
@@ -143,7 +142,7 @@ def eval_model(model, eval_data, device, args):
         for i,(inputs, action_labels, _) in bar:
             inputs = inputs.to(device)
             
-            action_logits, pre_actions = model.predict(inputs, args.reprogramming, add_origin=args.add_origin)
+            action_logits, pre_actions = model.predict(inputs)
             eval_loss = loss_fun(action_logits, action_labels)
             eval_avg_loss = (eval_avg_loss * i + eval_loss.item())/(i+1)
 
