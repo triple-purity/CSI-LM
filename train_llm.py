@@ -94,7 +94,7 @@ def train_model(model, train_data, start_epoch, epochs, optimizer: dict, schedul
             action_loss.backward(retain_graph=True)
 
             # Train Domain Recognition
-            if epoch<1 or (i+1)%args.calculate_domain_iter == 0:
+            if (i+1)%args.calculate_domain_iter == 0:
                 domain_loss = args.beta * cls_loss(domain_logits, domain_labels)
                 pre_iter = i//args.calculate_domain_iter
                 avg_domain_loss = (avg_domain_loss * pre_iter + domain_loss.item())/(pre_iter+1)
