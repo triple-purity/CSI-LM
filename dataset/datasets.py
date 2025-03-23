@@ -83,7 +83,8 @@ class CSI_Dataset(Dataset):
     """CSI dataset."""
     def __init__(self,  
                  data_names:List[str], 
-                 labels: List[str], 
+                 action_labels: List[int],
+                 domain_labels: List[int], 
                  antenna_num: int,
                  unified_length: int = 500,
                  extract_method: str = 'amplitude',
@@ -101,7 +102,8 @@ class CSI_Dataset(Dataset):
         assert extract_method in ['amplitude', 'csi-ratio', 'dfs'], "Invalid extract method: {}".format(extract_method)
 
         self.data_files = data_names
-        self.labels = labels
+        self.action_labels = action_labels
+        self.domain_labels = domain_labels
         self.antenna_num = antenna_num
         self.unified_length = unified_length
         self.extract_method = extract_method
@@ -114,7 +116,8 @@ class CSI_Dataset(Dataset):
         '''
         Returns the data and label at the given index.
         '''
-        cur_label = int(self.labels[idx])-1
+        gestur_label = int(self.action_labels)-1
+        domain_label = int(self.domain_labels[idx])
         data_file = self.data_files[idx]
         try:
             origin_csi = sio.loadmat(data_file)
@@ -132,7 +135,7 @@ class CSI_Dataset(Dataset):
             resample_csi = resample_csi.reshape(resample_csi.shape[0], -1)
             tensor_csi = torch.tensor(resample_csi, dtype=torch.float32)
             tensor_csi = data_norm(tensor_csi, self.norm_type)
-            return tensor_csi, cur_label
+            return tensor_csi, gestur_label, domain_label
         elif self.extract_method == 'csi-ratio':
             """
             csi_ratio, antenna_index = calculate_csi_ratio(origin_csi)
@@ -145,7 +148,7 @@ class CSI_Dataset(Dataset):
             resample_csi = resample_csi.reshape(resample_csi.shape[0], -1)
             tensor_csi = torch.tensor(resample_csi, dtype=torch.float32)
             tensor_csi = data_norm(tensor_csi, self.norm_type)
-            return tensor_csi, cur_label
+            return tensor_csi, gestur_label, domain_label
         else:
             # extract doppler spectrum from csi data
             # resample_csi = resample_csi_sequence(origin_csi, target_length=self.unified_length)
@@ -158,7 +161,7 @@ class CSI_Dataset(Dataset):
                 doppler_spectrum = np.concatenate([doppler_spectrum, np.zeros((doppler_spectrum.shape[0], self.unified_length-sample_index))], axis=1)
             tensor_dfs = torch.tensor(doppler_spectrum, dtype=torch.float32)
             tensor_dfs = tensor_dfs.permute(1, 0)
-            return tensor_dfs, cur_label
+            return tensor_dfs, gestur_label, domain_label
 
 
 class DFS_Dataset(Dataset):

@@ -152,17 +152,21 @@ def main():
     print(args)
     # 1. load data
     print("***** Start Load Data *****")
-    train_datas, train_labels, eval_datas, eval_labels = get_csi_data(
+    train_datas, train_gesture_labels, train_domain_labels, eval_datas, eval_gesture_labels, eval_domain_labels, = get_csi_data(
         args.data_path,
         select_domains = args.data_domains,
     )
 
-    train_dataset = CSI_Dataset(train_datas[2], train_labels[2], antenna_num=args.antenna_num,
-                                unified_length=args.time_length, extract_method=args.extract_method, 
+    train_dataset = CSI_Dataset(train_datas[2], train_gesture_labels[2], 
+                                train_domain_labels[2], antenna_num=args.antenna_num, 
+                                unified_length=args.time_length, 
+                                extract_method=args.extract_method, 
                                 data_key=args.data_key, norm_type=args.data_norm_type)
-    eval_dataset = CSI_Dataset(eval_datas[2], eval_labels[2], antenna_num=args.antenna_num,
-                            unified_length=args.time_length, extract_method=args.extract_method, 
-                            data_key=args.data_key, norm_type=args.data_norm_type)
+    eval_dataset = CSI_Dataset(eval_datas[2], eval_gesture_labels[2], 
+                               eval_domain_labels[2], antenna_num=args.antenna_num,
+                               unified_length=args.time_length, 
+                               extract_method=args.extract_method, 
+                               data_key=args.data_key, norm_type=args.data_norm_type)
     
     train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True)
     eval_loader = DataLoader(eval_dataset, batch_size=args.batch_size, shuffle=False)
