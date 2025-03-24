@@ -88,20 +88,32 @@ def train_model(model, train_data, start_epoch, epochs, optimizer: dict, schedul
 
             action_logits, domain_logits = model(inputs)
             
-            # Train Domain Recognition
-            domain_loss = args.beta * cls_loss(domain_logits, domain_labels)
-            pre_iter = i//args.calculate_domain_iter
-            avg_domain_loss = (avg_domain_loss * pre_iter + domain_loss.item())/(pre_iter+1)
-            domain_loss.backward(retain_graph=True)
-            # Train Action Recognition 
-            action_loss = cls_loss(action_logits, action_labels) + args.alpha * (1-cls_loss(domain_logits, domain_labels))
-            avg_action_loss = (avg_action_loss * i + action_loss.item())/(i+1)
-            action_loss.backward(retain_graph=True)
+            if epoch<10:
+                action_loss = cls_loss(action_logits, action_labels)
+                avg_action_loss = (avg_action_loss * i + action_loss.item())/(i+1)
+                action_loss.backward()
+                optimizer['action'].step()
+                optimizer['action'].zero_grad()
+            elif epoch<20:
+                domain_loss = cls_loss(domain_logits, domain_labels)
+                avg_domain_loss = (avg_domain_loss * (i) + domain_loss.item())/(i+1)
+                domain_loss.backward()
+                optimizer['domain'].step()
+                optimizer['action'].zero_grad()
+            else:
+                # Train Domain Recognition
+                domain_loss = cls_loss(domain_logits, domain_labels)
+                avg_domain_loss = (avg_domain_loss * (i) + domain_loss.item())/(i+1)
+                # Train Action Recognition 
+                action_loss = cls_loss(action_logits, action_labels)
+                avg_action_loss = (avg_action_loss * i + action_loss.item())/(i+1)
+                loss = action_loss - args.alpha * domain_loss
+                loss.backward()
 
-            optimizer['domain'].step()
-            optimizer['action'].step()
-            optimizer['domain'].zero_grad()
-            optimizer['action'].zero_grad()
+                optimizer['domain'].step()
+                optimizer['action'].step()
+                optimizer['domain'].zero_grad()
+                optimizer['action'].zero_grad()
 
 
             bar.set_description(
