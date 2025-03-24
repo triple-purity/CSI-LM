@@ -78,6 +78,7 @@ def train_model(model, train_data, start_epoch, epochs, optimizer: dict, schedul
         print('*** Start TRAINING Model ***')
         model.train()
         model.to(device)
+        epoch_temp = epoch%(args.init_domain_epoch+args.init_action_epoch)
 
         pred_labels = []
         targets = []
@@ -90,34 +91,20 @@ def train_model(model, train_data, start_epoch, epochs, optimizer: dict, schedul
 
             action_logits, domain_logits = model(inputs)
             
-            if epoch<args.init_action_epoch:
+            if epoch_temp<args.init_action_epoch:
                 action_loss = cls_loss(action_logits, action_labels)
+                domain_loss = cls_loss(domain_logits, domain_labels)
                 avg_action_loss = (avg_action_loss * i + action_loss.item())/(i+1)
-                action_loss.backward()
+                loss = action_loss - args.alpha * domain_loss
+                loss.backward()
                 optimizer['action'].step()
                 optimizer['action'].zero_grad()
-            elif epoch<args.init_domain_epoch:
+            else:
                 domain_loss = cls_loss(domain_logits, domain_labels)
                 avg_domain_loss = (avg_domain_loss * (i) + domain_loss.item())/(i+1)
                 domain_loss.backward()
                 optimizer['domain'].step()
                 optimizer['domain'].zero_grad()
-            else:
-                # Train Domain Recognition
-                domain_loss = cls_loss(domain_logits, domain_labels)
-                avg_domain_loss = (avg_domain_loss * (i) + domain_loss.item())/(i+1)
-                ### domain_loss.backward(retain=True)
-                # Train Action Recognition 
-                action_loss = cls_loss(action_logits, action_labels)
-                avg_action_loss = (avg_action_loss * i + action_loss.item())/(i+1)
-                loss = action_loss - args.alpha * domain_loss
-                loss.backward()
-
-                optimizer['domain'].step()
-                optimizer['action'].step()
-                optimizer['domain'].zero_grad()
-                optimizer['action'].zero_grad()
-
 
             bar.set_description(
                 desc = f'Epoch {epoch}/{epochs}: Avg Action Loss: {avg_action_loss:.4f}|| Avg Domain Loss: {avg_domain_loss:.4f}'
@@ -134,8 +121,10 @@ def train_model(model, train_data, start_epoch, epochs, optimizer: dict, schedul
         print(f"Train Time the Accuracy Score of Model is:{accuracy_score(targets, preds)}")
 
         if args.scheduler:
-            scheduler['action'].step()
-            scheduler['domain'].step()
+            if epoch_temp<args.init_action_epoch:
+                scheduler['action'].step()
+            else:
+                scheduler['domain'].step()
 
         if eval:
             print("***** Start Evaluation with Eval Data *****")
