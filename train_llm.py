@@ -55,8 +55,10 @@ def get_args_parser():
     #train model params
     parser.add_argument('--epoch', default=5, type=int)
     parser.add_argument('--batch_size', default=8, type=int)
-    parser.add_argument('--lr', default=2e-5, type=float)
-    parser.add_argument('--scheduler', default=False, type=bool)
+    parser.add_argument('--action_lr', default=2e-5, type=float)
+    parser.add_argument('--domain_lr', default=2e-5, type=float)
+    parser.add_argument('--action_scheduler', default=False, type=bool)
+    parser.add_argument('--domain_scheduler', default=False, type=bool)
     parser.add_argument('--weight_deacy', default=0.0, type=float)
     parser.add_argument('--label_smooth_rate', default=0.02, type=float)
     parser.add_argument('--calculate_domain_iter', default=5, type=bool)
@@ -120,10 +122,11 @@ def train_model(model, train_data, start_epoch, epochs, optimizer: dict, schedul
         targets = torch.cat(targets).numpy()
         print(f"Train Time the Accuracy Score of Model is:{accuracy_score(targets, preds)}")
 
-        if args.scheduler:
+        if args.action_scheduler:
             if epoch_temp<args.init_action_epoch:
                 scheduler['action'].step()
-            else:
+        if args.domain_scheduler:
+            if epoch_temp>=args.init_action_epoch:
                 scheduler['domain'].step()
 
         if eval:
@@ -206,23 +209,27 @@ def main():
     # 4. Optimizer
     action_optimizer = optim.Adam(
         chain(gan_model.feature_extracter.parameters(),gan_model.action_net.parameters()),
-        lr=args.lr, 
+        lr=args.action_lr, 
         weight_decay=args.weight_deacy
     )
     domain_optimizer = optim.Adam(
         gan_model.domain_net.parameters(),
-        lr=args.lr, 
+        lr=args.domain_lr, 
         weight_decay=args.weight_deacy
     )
     optimizer = {'action': action_optimizer, 'domain':domain_optimizer}
    
     # 5. Scheduler
     scheduler = None
-    if args.scheduler:
+    if args.action_scheduler:
         action_scheduler = optim.lr_scheduler.CosineAnnealingLR(action_optimizer, T_max= args.epoch, eta_min=5e-6)
+        scheduler = {'action': action_scheduler}
+    if args.domain_scheduler:
         domain_scheduler = optim.lr_scheduler.CosineAnnealingLR(domain_optimizer, T_max= args.epoch, eta_min=5e-6)
-        scheduler = {'action': action_scheduler, 'domain': domain_scheduler}
-
+        if scheduler is None:
+            scheduler = {'domain': domain_scheduler}
+        else:
+            scheduler['domain'] = domain_scheduler
     # 6. Train
     train_model(gan_model, train_loader, 0, args.epoch, optimizer, scheduler,
                 device, args, eval_data=eval_loader, eval=True)
