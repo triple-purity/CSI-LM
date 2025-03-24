@@ -106,6 +106,7 @@ def train_model(model, train_data, start_epoch, epochs, optimizer: dict, schedul
                 # Train Domain Recognition
                 domain_loss = cls_loss(domain_logits, domain_labels)
                 avg_domain_loss = (avg_domain_loss * (i) + domain_loss.item())/(i+1)
+                ### domain_loss.backward(retain=True)
                 # Train Action Recognition 
                 action_loss = cls_loss(action_logits, action_labels)
                 avg_action_loss = (avg_action_loss * i + action_loss.item())/(i+1)
@@ -155,6 +156,7 @@ def eval_model(model, eval_data, device, args):
         bar = tqdm(enumerate(eval_data), total=len(eval_data))
         for i,(inputs, action_labels, _) in bar:
             inputs = inputs.to(device)
+            action_labels = action_labels.to(device)
             
             action_logits, pre_actions = model.predict(inputs)
             eval_loss = loss_fun(action_logits, action_labels)
