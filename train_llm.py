@@ -60,6 +60,8 @@ def get_args_parser():
     parser.add_argument('--weight_deacy', default=0.0, type=float)
     parser.add_argument('--label_smooth_rate', default=0.02, type=float)
     parser.add_argument('--calculate_domain_iter', default=5, type=bool)
+    parser.add_argument('--init_action_epoch', default=10, type=int)
+    parser.add_argument('--init_domain_epoch', default=20, type=int)
     parser.add_argument('--alpha', default=0.1, type=float)
     parser.add_argument('--beta', default=1, type=float)
     args = parser.parse_args()
@@ -88,18 +90,18 @@ def train_model(model, train_data, start_epoch, epochs, optimizer: dict, schedul
 
             action_logits, domain_logits = model(inputs)
             
-            if epoch<10:
+            if epoch<args.init_action_epoch:
                 action_loss = cls_loss(action_logits, action_labels)
                 avg_action_loss = (avg_action_loss * i + action_loss.item())/(i+1)
                 action_loss.backward()
                 optimizer['action'].step()
                 optimizer['action'].zero_grad()
-            elif epoch<20:
+            elif epoch<args.init_domain_epoch:
                 domain_loss = cls_loss(domain_logits, domain_labels)
                 avg_domain_loss = (avg_domain_loss * (i) + domain_loss.item())/(i+1)
                 domain_loss.backward()
                 optimizer['domain'].step()
-                optimizer['action'].zero_grad()
+                optimizer['domain'].zero_grad()
             else:
                 # Train Domain Recognition
                 domain_loss = cls_loss(domain_logits, domain_labels)
