@@ -14,7 +14,7 @@ from torch.utils.data import DataLoader
 from dataset.datasets import CSI_Dataset, DFS_Dataset
 from model.LLM_Fintue import LLM2Rec, build_LLM2Rec
 from model.GAN import CSI_GAN
-from utils.train_util import DomainDeception
+from utils.train_util import DomainDeception, confidence_loss
 
 from tqdm.auto import tqdm
 from dataset.data import get_csi_data
@@ -56,16 +56,15 @@ def get_args_parser():
     parser.add_argument('--epoch', default=5, type=int)
     parser.add_argument('--batch_size', default=8, type=int)
     parser.add_argument('--action_lr', default=2e-5, type=float)
-    parser.add_argument('--domain_lr', default=2e-5, type=float)
+    parser.add_argument('--domain_lr', default=1e-5, type=float)
     parser.add_argument('--action_scheduler', default=False, type=bool)
     parser.add_argument('--domain_scheduler', default=False, type=bool)
+    parser.add_argument('--init_action_epoch', default=1, type=int)
+    parser.add_argument('--init_domain_epoch', default=4, type=int)
     parser.add_argument('--weight_deacy', default=0.0, type=float)
     parser.add_argument('--label_smooth_rate', default=0.02, type=float)
-    parser.add_argument('--calculate_domain_iter', default=5, type=bool)
-    parser.add_argument('--init_action_epoch', default=10, type=int)
-    parser.add_argument('--init_domain_epoch', default=20, type=int)
-    parser.add_argument('--alpha', default=0.1, type=float)
-    parser.add_argument('--beta', default=1, type=float)
+    parser.add_argument('--domain_alpha', default=0.05, type=float)
+    parser.add_argument('--conf_beta', default=0.05, type=int)
     args = parser.parse_args()
     return args
 
@@ -93,20 +92,21 @@ def train_model(model, train_data, start_epoch, epochs, optimizer: dict, schedul
 
             action_logits, domain_logits = model(inputs)
             
-            if epoch_temp<args.init_action_epoch:
-                action_loss = cls_loss(action_logits, action_labels)
-                domain_loss = cls_loss(domain_logits, domain_labels)
-                avg_action_loss = (avg_action_loss * i + action_loss.item())/(i+1)
-                loss = action_loss - args.alpha * domain_loss
-                loss.backward()
-                optimizer['action'].step()
-                optimizer['action'].zero_grad()
-            else:
+            if epoch_temp<args.init_domain_epoch:
                 domain_loss = cls_loss(domain_logits, domain_labels)
                 avg_domain_loss = (avg_domain_loss * (i) + domain_loss.item())/(i+1)
                 domain_loss.backward()
                 optimizer['domain'].step()
                 optimizer['domain'].zero_grad()
+            else:
+                action_loss = cls_loss(action_logits, action_labels)
+                domain_loss = cls_loss(domain_logits, domain_labels)
+                conf_loss = confidence_loss(action_logits)
+                avg_action_loss = (avg_action_loss * i + action_loss.item())/(i+1)
+                loss = action_loss - args.domain_alpha * domain_loss + args.conf_beta*conf_loss
+                loss.backward()
+                optimizer['action'].step()
+                optimizer['action'].zero_grad()
 
             bar.set_description(
                 desc = f'Epoch {epoch}/{epochs}: Avg Action Loss: {avg_action_loss:.4f}|| Avg Domain Loss: {avg_domain_loss:.4f}'
@@ -123,13 +123,13 @@ def train_model(model, train_data, start_epoch, epochs, optimizer: dict, schedul
         print(f"Train Time the Accuracy Score of Model is:{accuracy_score(targets, preds)}")
 
         if args.action_scheduler:
-            if epoch_temp<args.init_action_epoch:
+            if epoch_temp>=args.init_domain_epoch:
                 scheduler['action'].step()
         if args.domain_scheduler:
-            if epoch_temp>=args.init_action_epoch:
+            if epoch_temp<args.init_domain_epoch:
                 scheduler['domain'].step()
 
-        if eval:
+        if eval and epoch_temp>=args.init_domain_epoch:
             print("***** Start Evaluation with Eval Data *****")
             eval_model(model, eval_data, device, args=args)
     return Avg_Loss
@@ -220,16 +220,14 @@ def main():
     optimizer = {'action': action_optimizer, 'domain':domain_optimizer}
    
     # 5. Scheduler
-    scheduler = None
+    scheduler = {}
     if args.action_scheduler:
         action_scheduler = optim.lr_scheduler.CosineAnnealingLR(action_optimizer, T_max= args.epoch, eta_min=5e-6)
-        scheduler = {'action': action_scheduler}
+        scheduler['action'] = action_scheduler
     if args.domain_scheduler:
         domain_scheduler = optim.lr_scheduler.CosineAnnealingLR(domain_optimizer, T_max= args.epoch, eta_min=5e-6)
-        if scheduler is None:
-            scheduler = {'domain': domain_scheduler}
-        else:
-            scheduler['domain'] = domain_scheduler
+        scheduler['domain'] = domain_scheduler
+
     # 6. Train
     train_model(gan_model, train_loader, 0, args.epoch, optimizer, scheduler,
                 device, args, eval_data=eval_loader, eval=True)
