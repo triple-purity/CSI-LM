@@ -12,7 +12,7 @@ from torch.optim.lr_scheduler import LambdaLR
 from torch.utils.data import DataLoader
 
 from dataset.datasets import HAR_Dataset
-from model.LLM_Fintue import LLM2Rec, build_LLM2Rec
+from model.LM_Fintue import LLM2Rec, build_LLM2Rec
 
 from tqdm.auto import tqdm
 from sklearn.metrics import f1_score, accuracy_score, recall_score, precision_score

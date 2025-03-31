@@ -20,93 +20,6 @@ from model.embed import TokenEmbedding, PositionalEmbedding, PatchEmbedding
 llama_names = ['unsloth/Llama-3.2-1B', 'Qwen/Qwen2.5-1.5B', 'deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B']
 gpt_names = ['openai-community/gpt2']
 
-# 1. Attention Block as Transformer Encoder
-class MultiHeadAttention(nn.Module):
-    def __init__(self, embed_size, heads, head_dim=None, dropout=0.):
-        super(MultiHeadAttention, self).__init__()
-        self.embed_size = embed_size
-        self.heads = heads
-        self.head_dim = head_dim or embed_size // heads
-
-        self.values = nn.Linear(self.embed_size, self.head_dim*self.heads, bias=False)
-        self.keys = nn.Linear(self.embed_size, self.head_dim*self.heads, bias=False)
-        self.queries = nn.Linear(self.embed_size, self.head_dim*self.heads, bias=False)
-        self.fc_out = nn.Linear(heads * self.head_dim, embed_size)
-        self.dropout = nn.Dropout(dropout)
-
-    def forward(self, x, mask=None):
-        B, L, _ = x.shape
-        
-        # Split the embedding into self.heads different pieces
-        values = self.values(x).reshape(B, L, self.heads, -1).contiguous()
-        keys = self.keys(x).reshape(B, L, self.heads, -1).contiguous()
-        queries = self.queries(x).reshape(B, L, self.heads, -1).contiguous()
-
-        # Einsum does matrix multiplication for query*keys for each training example
-        # with every other training example, don't be confused by einsum
-        # it's just a way to do batch matrix multiplication
-        energy = torch.einsum("nqhd,nkhd->nhqk", [queries, keys])
-
-        # Mask padded indices so their weights become 0
-        if mask is not None:
-            energy = energy.masked_fill(mask == 0, float("-1e20"))
-
-        attention = torch.softmax(energy / (self.embed_size ** (1 / 2)), dim=3)
-
-        out = torch.einsum("nhql,nlhd->nqhd", [attention, values]).reshape(
-            B, L, self.heads * self.head_dim
-        )
-
-        out = self.fc_out(out)
-        return self.dropout(out)
-    
-class Encoder(nn.Module):
-    def __init__(self, embed_size, heads, head_dim=None, dropout=0.):
-        super(Encoder, self).__init__()
-        self.norm1 = nn.LayerNorm(embed_size)
-        self.attention = MultiHeadAttention(embed_size, heads, head_dim, dropout)
-        self.mlp = nn.Sequential(
-            nn.Linear(embed_size, embed_size * 4),
-            nn.GELU(),
-            nn.Linear(embed_size * 4, embed_size),
-            nn.Dropout(dropout),
-        )
-        self.norm2 = nn.LayerNorm(embed_size)
-    
-    def forward(self, x):
-        x = x + self.attention(self.norm1(x))
-        x = x + self.mlp(self.norm2(x))
-        return x
-
-class DowmLayer(nn.Module):
-    def __init__(self, embed_size):
-        super(DowmLayer, self).__init__()
-        self.downlayer = nn.Conv1d(embed_size, embed_size, kernel_size=3, padding=1, stride=2, bias=False)
-
-    def forward(self, x):
-        x_permuted = x.permute(0, 2, 1)
-        x_downsampled = self.downlayer(x_permuted)
-        x_out = x_downsampled.permute(0, 2, 1)
-        return x_out
-
-
-class TimeEncoder(nn.Module):
-    def __init__(self, embed_size, heads, head_dim=None, num_encoder=4, dropout=0.1):
-        super(TimeEncoder, self).__init__()
-        self.layers = nn.ModuleList()
-        for i in range(num_encoder):
-            if i < num_encoder-1:
-                self.layers.append(Encoder(embed_size, heads, head_dim, dropout))
-                self.layers.append(DowmLayer(embed_size))
-            else:
-                self.layers.append(Encoder(embed_size, heads, head_dim, dropout))
-
-    def forward(self, x):
-        for layer in self.layers:
-            x = layer(x)
-        return x
-
-
 # 2. ReprogrammingLayer
 # To transform the target embedding into the same dimension as the source embedding
 class ReprogrammingLayer(nn.Module):
@@ -150,9 +63,7 @@ class ReprogrammingLayer(nn.Module):
 
         return reprogramming_embedding
 
-# 3. Final Extract Global Feature
-
-# 4. RMSNorm Layer for Llama
+# 3. RMSNorm Layer for Llama
 class RMSNorm(nn.Module):
     def __init__(self, hidden_size, eps=1e-6):
         super().__init__()
@@ -170,7 +81,7 @@ class RMSNorm(nn.Module):
         return f"{tuple(self.weight.shape)}, eps={self.variance_epsilon}"
 
 
-# 3. Network Based LLM
+# 4. Network Based LLM
 class LLM2Rec(nn.Module):
     def __init__(self,
                  llm_name,
@@ -214,6 +125,7 @@ class LLM2Rec(nn.Module):
         
         # 2. CSI Process
         # 2.1 token_embedding is used for [B,T,C]
+        # Multi Scale CNN + PatchEmbedding
         self.position_embed = PositionalEmbedding(self.d_llm)
         kernel_dims = [(((input_dim*kernel)//2),kernel) for kernel in token_kernels]
         self.token_embeddings = nn.ModuleList(
@@ -225,7 +137,6 @@ class LLM2Rec(nn.Module):
             nn.Dropout(dropout),
             RMSNorm(self.d_llm) if self.llm_name == 'llama' else nn.LayerNorm(self.d_llm) 
         )
-        self.CSI_Trans = TimeEncoder(self.d_llm, self.n_heads, self.trans_layer)
 
         # 3. Add Extral token
         self.cls_token = nn.Parameter(torch.zeros(1, 1, self.d_llm), requires_grad=True)
@@ -353,7 +264,7 @@ def build_LLM2Rec(
         batch_seq_len=2000,
         lora=False,
         reprogramming=False, 
-    ):
+    )-> LLM2Rec:
     model = LLM2Rec(
             llm_name=llm_name,
             d_model=d_model,
