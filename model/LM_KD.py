@@ -144,7 +144,7 @@ class AttentionBlock(nn.Module):
         x = x * (F.sigmoid(spatial_att))
         return x
 
-
+# **有问题**
 class CSINet(nn.Module):
     def __init__(self, num_classes, in_channels, out_channels, unified_len=500, attn_blocks=3, bias=False):
         super(CSINet, self).__init__()

@@ -125,7 +125,7 @@ class LLM2Rec(nn.Module):
         
         # 2. CSI Process
         # 2.1 token_embedding is used for [B,T,C]
-        # Multi Scale CNN + PatchEmbedding
+        # Multi Scale CNN + PatchEmbedding **有问题**
         self.position_embed = PositionalEmbedding(self.d_llm)
         kernel_dims = [(((input_dim*kernel)//2),kernel) for kernel in token_kernels]
         self.token_embeddings = nn.ModuleList(
