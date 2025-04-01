@@ -81,6 +81,7 @@ class TimeEncoder(nn.Module):
                 self.layers.append(DowmLayer(embed_size))
             else:
                 self.layers.append(Encoder(embed_size, heads, head_dim, dropout))
+
     def forward(self, x):
         for layer in self.layers:
             x = layer(x)
