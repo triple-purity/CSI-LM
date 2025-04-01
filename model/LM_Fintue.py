@@ -16,6 +16,7 @@ from peft import get_peft_model, LoraConfig
 
 from einops import rearrange
 from model.embed import TokenEmbedding, PositionalEmbedding, PatchEmbedding
+from model.StuModels import TimeEncoder
 
 llama_names = ['unsloth/Llama-3.2-1B', 'Qwen/Qwen2.5-1.5B', 'deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B']
 gpt_names = ['openai-community/gpt2']
@@ -236,7 +237,7 @@ class LLM2Rec(nn.Module):
             conv_x.append(layer(x))
         x1 = torch.cat(conv_x, dim=-1)
         x1 = self.token_linear(x1)
-        x1 = self.CSI_Trans(self.position_embed(x1))
+        # x1 = self.CSI_Trans(self.position_embed(x1))
 
         # 2. Reprograming
         if self.reprogramming:

@@ -14,7 +14,7 @@ from torch.utils.data import DataLoader
 from dataset.datasets import CSI_Dataset, DFS_Dataset
 from model.LM_Fintue import LLM2Rec, build_LLM2Rec
 from model.LM_GAN import CSI_GAN
-from utils.train_util import DomainDeception, confidence_loss
+from utils.train_util import confidence_loss
 
 from tqdm.auto import tqdm
 from dataset.data import get_csi_data
