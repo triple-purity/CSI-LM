@@ -15,8 +15,8 @@ from transformers import GPT2Tokenizer, GPT2Model, GPT2Config
 from peft import get_peft_model, LoraConfig
 
 from einops import rearrange
-from model.embed import TokenEmbedding, PositionalEmbedding, PatchEmbedding
-from model.StuModels import TimeEncoder
+from models.embed import TokenEmbedding, PositionalEmbedding, PatchEmbedding
+from models.StuModels import TimeEncoder
 
 llama_names = ['unsloth/Llama-3.2-1B', 'Qwen/Qwen2.5-1.5B', 'deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B']
 gpt_names = ['openai-community/gpt2']
@@ -250,7 +250,6 @@ class LLM2Rec(nn.Module):
         x1 = self.llm_model(inputs_embeds=x1).last_hidden_state
         output = x1[:,-1]
         return output
-
 def build_LLM2Rec(
         llm_name, 
         d_model,

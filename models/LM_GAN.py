@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 from torch.functional import F
 
-from model.LLM_Fintue import build_LLM2Rec
+from models.LM_Base import build_LLM2Rec
 
 class RecNet(nn.Module):
     def __init__(self, num_classes, embed_size, dropout=0.1):

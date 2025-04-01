@@ -152,28 +152,30 @@ class CSINet(nn.Module):
         self.in_channels = in_channels
         self.unified_len = unified_len
         self.out_channels = out_channels
-
+        
+        cur_len = unified_len
         self.feature_ext = nn.ModuleList()
         for _ in range(attn_blocks):
             self.feature_ext.append(ConvBlock(in_channels, in_channels, bias=bias))
             self.feature_ext.append(AttentionBlock(in_channels, bias=bias))
+            cur_len = (cur_len-1)//2+1
         self.feature_ext.append(ConvBlock(in_channels, in_channels, bias=bias))
+        cur_len = (cur_len-1)//2+1
 
         self.avg_layer = nn.Sequential(
             nn.AdaptiveAvgPool1d(1),
             nn.Flatten(start_dim=1),
-            nn.Linear(in_channels, out_channels)
+            nn.Linear(cur_len, out_channels)
         )
 
         self.head = nn.Sequential(
-            nn.Linear(in_channels, num_classes),
+            nn.Linear(out_channels, num_classes),
         )
     
     def forward(self, x):
         for layer in self.feature_ext:
             x = layer(x)
         x = self.avg_layer(x)
-        x = F.linear()
         return x
 
     def logits(self, x):

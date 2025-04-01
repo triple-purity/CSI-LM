@@ -11,7 +11,7 @@ import torch.optim as optim
 from torch.utils.data import DataLoader
 
 from dataset.datasets import CSI_Dataset, DFS_Dataset, BVP_Dataset
-from model.CLIP_Text_Trans_Base import build_clip_csi_model
+from models.CLIP_Text_Trans_Base import build_clip_csi_model
 
 from tqdm.auto import tqdm
 from dataset.data import get_csi_data, get_dfs_data, get_bvp_data
