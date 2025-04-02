@@ -70,7 +70,7 @@ def get_args_parser():
 
 def train_model(model, train_data, start_epoch, epochs, optimizer: dict, scheduler: dict, 
                 device, args, eval_data: Optional[DataLoader] = None, eval=False):
-    cls_loss = nn.CrossEntropyLoss()
+    cls_loss = nn.CrossEntropyLoss(label_smoothing=args.label_smooth_rate)
     Avg_Loss = list()
 
     torch.autograd.set_detect_anomaly(True) 

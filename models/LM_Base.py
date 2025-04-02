@@ -16,7 +16,7 @@ from peft import get_peft_model, LoraConfig
 
 from einops import rearrange
 from models.embed import TokenEmbedding, PositionalEmbedding, PatchEmbedding
-from models.StuModels import TimeEncoder
+from models.StuModels import MultiHeadAttention
 
 llama_names = ['unsloth/Llama-3.2-1B', 'Qwen/Qwen2.5-1.5B', 'deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B']
 gpt_names = ['openai-community/gpt2']
@@ -126,18 +126,20 @@ class LLM2Rec(nn.Module):
         
         # 2. CSI Process
         # 2.1 token_embedding is used for [B,T,C]
-        # Multi Scale CNN + PatchEmbedding **有问题**
-        self.position_embed = PositionalEmbedding(self.d_llm)
+        # Multi Scale CNN + TokenEmbedding 
         kernel_dims = [(((input_dim*kernel)//2),kernel) for kernel in token_kernels]
         self.token_embeddings = nn.ModuleList(
             [TokenEmbedding(input_dim, dim, kernel) for dim, kernel in kernel_dims]
         )
         self.token_linear = nn.Sequential(
-            nn.Linear(sum([item for item,_ in kernel_dims]), self.d_llm),
+            nn.Linear(sum([item for item,_ in kernel_dims]), self.d_model),
             nn.GELU(),
             nn.Dropout(dropout),
-            RMSNorm(self.d_llm) if self.llm_name == 'llama' else nn.LayerNorm(self.d_llm) 
+            RMSNorm(self.d_model) if self.llm_name == 'llama' else nn.LayerNorm(self.d_llm) 
         )
+        self.token_embed = TokenEmbedding(self.d_model, self.d_llm, kernel=9, stride=4, padding=4)
+        self.atten_embed = MultiHeadAttention(self.d_llm, self.n_heads, dropout=dropout)
+        self.position_embed = PositionalEmbedding(self.d_llm)  # 应该是可训练的
 
         # 3. Add Extral token
         self.cls_token = nn.Parameter(torch.zeros(1, 1, self.d_llm), requires_grad=True)
@@ -237,19 +239,22 @@ class LLM2Rec(nn.Module):
             conv_x.append(layer(x))
         x1 = torch.cat(conv_x, dim=-1)
         x1 = self.token_linear(x1)
-        # x1 = self.CSI_Trans(self.position_embed(x1))
+        x1 = self.token_embed(x1)
+        x1 = self.atten_embed(x1)
 
         # 2. Reprograming
         if self.reprogramming:
             source_embeddings = self.mapping_layer(self.word_embeddings.permute(1, 0)).permute(1, 0)    
             x1 = self.reprogramming_layer(x1, source_embeddings, source_embeddings)               
-        
+
         x1 = torch.cat((x1, self.cls_token.expand(B, 1, -1)), dim=1)
+        x1 = self.position_embed(x1) 
 
         # 3. LLM Interaction
         x1 = self.llm_model(inputs_embeds=x1).last_hidden_state
         output = x1[:,-1]
         return output
+    
 def build_LLM2Rec(
         llm_name, 
         d_model,

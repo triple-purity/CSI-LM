@@ -26,13 +26,12 @@ class PositionalEmbedding(nn.Module):
 
 
 class TokenEmbedding(nn.Module):
-    def __init__(self, c_in, c_out, kernel=3):
+    def __init__(self, c_in, c_out, kernel=3, stride=1, padding=1):
         super(TokenEmbedding, self).__init__()
-        padding = (kernel-1)//2
+
         # Local Time Series Attention
-        self.tokenConv = nn.Conv1d(in_channels=c_in, out_channels=c_out,
-                                   kernel_size=kernel, padding=padding, padding_mode='circular', 
-                                   bias=False)
+        self.tokenConv = nn.Conv1d(in_channels=c_in, out_channels=c_out, kernel_size=kernel, 
+                                   stride=stride, padding=padding, bias=False)
         for m in self.modules():
             if isinstance(m, nn.Conv1d):
                 nn.init.kaiming_normal_(
