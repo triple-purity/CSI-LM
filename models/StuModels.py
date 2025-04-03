@@ -2,7 +2,10 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-# 1. Attention Block as Transformer Encoder
+from models.embed import PositionalEmbedding
+from models.LM_Base import TimeEmbedding
+
+# 1. Create TimeModule base Transformer
 class MultiHeadAttention(nn.Module):
     def __init__(self, embed_size, heads, head_dim=None, dropout=0.):
         super(MultiHeadAttention, self).__init__()
@@ -42,9 +45,9 @@ class MultiHeadAttention(nn.Module):
         out = self.fc_out(out)
         return self.dropout(out)
     
-class Encoder(nn.Module):
+class EncoderLayer(nn.Module):
     def __init__(self, embed_size, heads, head_dim=None, dropout=0.):
-        super(Encoder, self).__init__()
+        super(EncoderLayer, self).__init__()
         self.norm1 = nn.LayerNorm(embed_size)
         self.attention = MultiHeadAttention(embed_size, heads, head_dim, dropout)
         self.mlp = nn.Sequential(
@@ -55,14 +58,14 @@ class Encoder(nn.Module):
         )
         self.norm2 = nn.LayerNorm(embed_size)
     
-    def forward(self, x):
-        x = x + self.attention(self.norm1(x))
+    def forward(self, x, mask=None):
+        x = x + self.attention(self.norm1(x), mask)
         x = x + self.mlp(self.norm2(x))
         return x
 
-class DowmLayer(nn.Module):
+class DownLayer(nn.Module):
     def __init__(self, embed_size):
-        super(DowmLayer, self).__init__()
+        super(DownLayer, self).__init__()
         self.downlayer = nn.Conv1d(embed_size, embed_size, kernel_size=3, padding=1, stride=2, bias=False)
 
     def forward(self, x):
@@ -71,24 +74,76 @@ class DowmLayer(nn.Module):
         x_out = x_downsampled.permute(0, 2, 1)
         return x_out
 
-class TimeEncoder(nn.Module):
-    def __init__(self, embed_size, heads, head_dim=None, num_encoder=4, dropout=0.1):
-        super(TimeEncoder, self).__init__()
+class TimeModule(nn.Module):
+    def __init__(self,
+                 input_dim,
+                 token_kernels,
+                 llm_name, 
+                 embed_size, 
+                 n_heads, 
+                 head_dim=None, 
+                 num_encoder=4, 
+                 dropout=0.1
+                ):
+        super(TimeModule, self).__init__()
+
+        self.time_embed = TimeEmbedding(
+            input_dim = input_dim,
+            token_kernels = token_kernels,
+            d_model = embed_size,
+            d_llm = embed_size,
+            n_heads=n_heads,
+            llm_name = llm_name,   
+        )
+
+        self.position_embed = PositionalEmbedding(embed_size)
+        self.cls_token = nn.Parameter(torch.zeros(1, 1, embed_size), requires_grad=True)
+
         self.layers = nn.ModuleList()
         for i in range(num_encoder):
             if i < num_encoder-1:
-                self.layers.append(Encoder(embed_size, heads, head_dim, dropout))
-                self.layers.append(DowmLayer(embed_size))
+                self.layers.append(EncoderLayer(embed_size, n_heads, head_dim, dropout))
+                self.layers.append(DownLayer(embed_size))
             else:
-                self.layers.append(Encoder(embed_size, heads, head_dim, dropout))
+                self.layers.append(EncoderLayer(embed_size, n_heads, head_dim, dropout))
 
-    def forward(self, x):
+        self.head_layer = nn.Sequential(
+            nn.Linear(embed_size, embed_size),
+            nn.Dropout(dropout),
+        )
+    def forward(self, 
+                x, 
+                decoder_mask=False, 
+                mask=None, 
+                return_embed = True, 
+                return_feature=True
+            ):
+        if decoder_mask and mask is not None:
+            ValueError("mask should be provided when decoder_mask is False")
+
+        x_embed = self.time_embed(x)
+        x_input = torch.cat((self.cls_token.expand(x_embed.shape[0], 1, -1), x_embed ), dim=1)
+        x_input = self.position_embed(x_input)
         for layer in self.layers:
-            x = layer(x)
-        return x
+            if isinstance(layer, EncoderLayer):
+                if decoder_mask and mask is None:
+                    mask = torch.tril(torch.ones(x_input.shape[1], x_input.shape[1]))
+                x_input = layer(x_input, mask)
+            else:
+                x_input = layer(x_input)
+        x_input = x_input[:, 0, :]
+        x_logits = self.head_layer(x_input) 
 
+        return_dict = {'logits': x_logits} 
+        if return_embed:
+            return_dict['embed'] = x_embed
+        if return_feature:
+            return_dict['feature'] = x_input
+        return return_dict
+        
 
-# 2. Create Small Module 
+# 2. Create CSINet base Conv and Attention 
+# It's not used in the experiment.
 class ConvBlock(nn.Module):
     def __init__(self, in_channels, out_channels, bias=False):
         super(ConvBlock, self).__init__()

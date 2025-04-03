@@ -47,7 +47,7 @@ class CSI_GAN(nn.Module):
         self.domain_num = domain_num
 
         # 1. 特征提取器
-        self.feature_extracter = build_LLM2Rec(
+        self.time_embed_model, self.feature_extracter = build_LLM2Rec(
                                     llm_name,
                                     d_model,
                                     input_dim = input_dim,
@@ -75,6 +75,7 @@ class CSI_GAN(nn.Module):
         )
 
     def forward(self, x):
+        x = self.time_embed_model(x)
         x = self.feature_extracter(x)
         action_logits = self.action_net(x)
 
@@ -84,6 +85,7 @@ class CSI_GAN(nn.Module):
         return action_logits, domain_logits
 
     def predict(self, x):
+        x = self.time_embed_model(x)
         x = self.feature_extracter(x)
         action_logits = self.action_net(x)
         pred_action = torch.argmax(action_logits, dim=-1)

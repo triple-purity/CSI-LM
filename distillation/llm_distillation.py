@@ -16,7 +16,7 @@ from dataset.datasets import CSI_Dataset, DFS_Dataset
 
 from models.embed import PositionalEmbedding, TokenEmbedding
 from models.LM_Base import build_LLM2Rec
-from models.StuModels import CSINet, TimeEncoder
+from models.StuModels import CSINet, TimeModule
 
 from dataset.data import get_csi_data
 from utils.train_util import InfoCE, KD_loss
@@ -199,7 +199,7 @@ def main():
     )
 
     # create student model
-    student_model = TimeEncoder()
+    student_model = TimeModule
     
     # 4. Optimizer
     model_optimizer = optim.Adam(

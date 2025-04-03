@@ -21,7 +21,63 @@ from models.StuModels import MultiHeadAttention
 llama_names = ['unsloth/Llama-3.2-1B', 'Qwen/Qwen2.5-1.5B', 'deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B']
 gpt_names = ['openai-community/gpt2']
 
-# 2. ReprogrammingLayer
+
+# 1. RMSNorm Layer for Llama
+class RMSNorm(nn.Module):
+    def __init__(self, hidden_size, eps=1e-6):
+        super().__init__()
+        self.weight = nn.Parameter(torch.ones(hidden_size))
+        self.variance_epsilon = eps
+
+    def forward(self, hidden_states):
+        input_dtype = hidden_states.dtype
+        hidden_states = hidden_states.to(torch.float32)
+        variance = hidden_states.pow(2).mean(-1, keepdim=True)
+        hidden_states = hidden_states * torch.rsqrt(variance + self.variance_epsilon)
+        return self.weight * hidden_states.to(input_dtype)
+
+    def extra_repr(self):
+        return f"{tuple(self.weight.shape)}, eps={self.variance_epsilon}"
+
+
+# 2. Time Series Embedding
+class TimeEmbedding(nn.Module):
+    def __init__(self, input_dim, token_kernels, d_model, d_llm, n_heads, llm_name, dropout=0.1):
+        super(TimeEmbedding, self).__init__()
+
+        self.input_dim = input_dim
+        self.token_kernels = token_kernels
+        self.d_model = d_model
+        self.d_llm = d_llm
+        self.n_heads = n_heads
+
+        # token_embedding is used for [B,T,C]
+        # Multi Scale CNN + TokenEmbedding 
+        kernel_dims = [(((input_dim*kernel)//2),kernel) for kernel in token_kernels]
+        self.token_embeddings = nn.ModuleList(
+            [TokenEmbedding(input_dim, dim, kernel) for dim, kernel in kernel_dims]
+        )
+        self.token_linear = nn.Sequential(
+            nn.Linear(sum([item for item,_ in kernel_dims]), self.d_model),
+            nn.GELU(),
+            nn.Dropout(dropout),
+            RMSNorm(self.d_model) if llm_name in llama_names else nn.LayerNorm(self.d_llm) 
+        )
+        self.token_embed = TokenEmbedding(self.d_model, self.d_llm, kernel=9, stride=4, padding=4)
+        self.atten_embed = MultiHeadAttention(self.d_llm, self.n_heads, dropout=dropout)
+    
+    def forward(self, x):
+        # 1. Token Embedding
+        conv_x = []
+        for layer in self.token_embeddings:
+            conv_x.append(layer(x))
+        x_cat = torch.cat(conv_x, dim=-1)
+        x_cat = self.token_linear(x_cat)
+        x_cat = self.token_embed(x_cat)
+        x_cat = self.atten_embed(x_cat)
+        return x_cat
+
+# 3. ReprogrammingLayer
 # To transform the target embedding into the same dimension as the source embedding
 class ReprogrammingLayer(nn.Module):
     def __init__(self, d_model, n_heads, d_llm, d_keys=None, attention_dropout=0.1):
@@ -64,23 +120,6 @@ class ReprogrammingLayer(nn.Module):
 
         return reprogramming_embedding
 
-# 3. RMSNorm Layer for Llama
-class RMSNorm(nn.Module):
-    def __init__(self, hidden_size, eps=1e-6):
-        super().__init__()
-        self.weight = nn.Parameter(torch.ones(hidden_size))
-        self.variance_epsilon = eps
-
-    def forward(self, hidden_states):
-        input_dtype = hidden_states.dtype
-        hidden_states = hidden_states.to(torch.float32)
-        variance = hidden_states.pow(2).mean(-1, keepdim=True)
-        hidden_states = hidden_states * torch.rsqrt(variance + self.variance_epsilon)
-        return self.weight * hidden_states.to(input_dtype)
-
-    def extra_repr(self):
-        return f"{tuple(self.weight.shape)}, eps={self.variance_epsilon}"
-
 
 # 4. Network Based LLM
 class LLM2Rec(nn.Module):
@@ -90,12 +129,12 @@ class LLM2Rec(nn.Module):
                  input_dim = 90,
                  token_kernels=[5, 11, 21],
                  trans_layer = 3,
-                 reduce_ratio = 1,
                  n_heads = 8,
                  llm_layers=12,
                  frozen_llm_layer=8,
-                 batch_seq_len=2000, 
+                 batch_seq_len=2000,
                  dropout = 0.1,
+                 add_embed_layer = False, 
                  reprogramming = False,
                 ):
         super(LLM2Rec, self).__init__()
@@ -105,13 +144,12 @@ class LLM2Rec(nn.Module):
         self.frozen_llm_layer = frozen_llm_layer
         # CSI 
         self.seq_len = batch_seq_len
-        self.input_dim = input_dim
         self.d_model = d_model
         
         self.trans_layer = trans_layer
-        self.reduce_ratio = reduce_ratio
         self.n_heads = n_heads
 
+        self.add_embed_layer = add_embed_layer
         self.reprogramming = reprogramming
 
         # 0. Edit Prompt
@@ -125,20 +163,16 @@ class LLM2Rec(nn.Module):
         self.load_LLM()
         
         # 2. CSI Process
-        # 2.1 token_embedding is used for [B,T,C]
-        # Multi Scale CNN + TokenEmbedding 
-        kernel_dims = [(((input_dim*kernel)//2),kernel) for kernel in token_kernels]
-        self.token_embeddings = nn.ModuleList(
-            [TokenEmbedding(input_dim, dim, kernel) for dim, kernel in kernel_dims]
-        )
-        self.token_linear = nn.Sequential(
-            nn.Linear(sum([item for item,_ in kernel_dims]), self.d_model),
-            nn.GELU(),
-            nn.Dropout(dropout),
-            RMSNorm(self.d_model) if self.llm_name == 'llama' else nn.LayerNorm(self.d_llm) 
-        )
-        self.token_embed = TokenEmbedding(self.d_model, self.d_llm, kernel=9, stride=4, padding=4)
-        self.atten_embed = MultiHeadAttention(self.d_llm, self.n_heads, dropout=dropout)
+        if self.add_embed_layer:
+            self.time_embed_layer = TimeEmbedding(
+                input_dim = input_dim, 
+                token_kernels = token_kernels, 
+                d_model = d_model, 
+                d_llm = d_model, 
+                n_heads=self.n_heads,
+                llm_name = llm_name,
+                dropout = dropout,    
+            )
         self.position_embed = PositionalEmbedding(self.d_llm)  # 应该是可训练的
 
         # 3. Add Extral token
@@ -225,6 +259,11 @@ class LLM2Rec(nn.Module):
                 break
 
     def forward(self, x):
+        """
+        parameters:
+            x: B, T, C -- It is embedded by TimeEmbedding or origin data
+            return_embed: bool
+        """
         B, T, C = x.shape
 
         # 0. Prompt Embeddings
@@ -233,64 +272,82 @@ class LLM2Rec(nn.Module):
         be_prompt_embed = self.llm_model.get_input_embeddings()(be_prompt.to(x.device)).expand((B, -1, -1))
         """
 
-        # 1. Token Embedding
-        conv_x = []
-        for layer in self.token_embeddings:
-            conv_x.append(layer(x))
-        x1 = torch.cat(conv_x, dim=-1)
-        x1 = self.token_linear(x1)
-        x1 = self.token_embed(x1)
-        x1 = self.atten_embed(x1)
+        # 1. Time Embedding
+        if self.add_embed_layer:
+            x = self.time_embed_layer(x)
 
         # 2. Reprograming
+        x_text_embed = None
         if self.reprogramming:
             source_embeddings = self.mapping_layer(self.word_embeddings.permute(1, 0)).permute(1, 0)    
-            x1 = self.reprogramming_layer(x1, source_embeddings, source_embeddings)               
+            x_text_embed = self.reprogramming_layer(x, source_embeddings, source_embeddings)               
 
-        x1 = torch.cat((x1, self.cls_token.expand(B, 1, -1)), dim=1)
-        x1 = self.position_embed(x1) 
+        x_input = x if x_text_embed is None else x_text_embed
+        x_input = torch.cat((x_input , self.cls_token.expand(B, 1, -1)), dim=1)
+        # x_input = self.position_embed(x_input) 
 
         # 3. LLM Interaction
-        x1 = self.llm_model(inputs_embeds=x1).last_hidden_state
-        output = x1[:,-1]
-        return output
+        x_output = self.llm_model(inputs_embeds=x_input).last_hidden_state
+        x_output = x_output[:,-1]
+
+        return x_output
     
+def build_time_embed(
+        input_dim,
+        d_model,
+        d_llm,
+        llm_name,
+        token_kernels=[5, 11, 21],
+    ):
+    
+    time_embed_model = TimeEmbedding(
+        input_dim = input_dim,
+        token_kernels = token_kernels,
+        d_model = d_model,
+        d_llm = d_llm,
+        llm_name = llm_name,
+    )
+
+    return time_embed_model
+
 def build_LLM2Rec(
         llm_name, 
         d_model,
         input_dim = 90,
         token_kernels=[5, 11, 21],
         trans_layer = 4,
-        reduce_ratio = 1,
         n_heads=8,
         llm_layers=12,  
         start_layer=0,
         frozen_llm_layer=10,
         batch_seq_len=2000,
         lora=False,
+        add_embed_layer=False,
         reprogramming=False, 
     )-> LLM2Rec:
-    model = LLM2Rec(
+
+    lm_model = LLM2Rec(
             llm_name=llm_name,
             d_model=d_model,
             input_dim=input_dim,
             token_kernels=token_kernels,
             trans_layer=trans_layer,
-            reduce_ratio = reduce_ratio,
             n_heads=n_heads,
             llm_layers=llm_layers,
             frozen_llm_layer=frozen_llm_layer,
             batch_seq_len=batch_seq_len,
+            add_embed_layer=add_embed_layer,
             reprogramming=reprogramming,
         )
+    
     if llm_name in llama_names:
-        model.frozen_llama(start_layer)
+        lm_model.frozen_llama(start_layer)
     else:
-        model.frozen_gpt2(start_layer)
+        lm_model.frozen_gpt2(start_layer)
 
     if llm_name in llama_names and lora:
-        model.llm_lora()
-    return model
+        lm_model.llm_lora()
+    return lm_model
 
 
     
