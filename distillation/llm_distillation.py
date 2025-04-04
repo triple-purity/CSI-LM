@@ -39,9 +39,7 @@ def get_args_parser():
     parser.add_argument('--data_norm_type', default='min_max_1', type=str, help='min_max_1 or min_max_2 or mean_std')
     parser.add_argument('--data_key', default='csi_data', type=str)
     
-    # create model params
-    parser.add_argument('--action_num', default=2, type=int)
-    parser.add_argument('--domain_num', default=4, type=int)
+    # create lm_model--teacher params
     parser.add_argument('--llm_name', default='unsloth/Qwen2.5-1.5B', type=str)
     parser.add_argument('--d_model', default=1024, type=int)
     parser.add_argument('--input_dim', default=90, type=int)
@@ -52,7 +50,12 @@ def get_args_parser():
     parser.add_argument('--start_layer', default=0, type=int)
     parser.add_argument('--frozen_llm_layer', default=12, type=int)
     parser.add_argument('--lora', default=False, type=bool)
+    parser.add_argument('--add_embed_layer', default=False, type=bool)
     parser.add_argument('--reprogramming', default=False, type=bool)
+
+    # create TimeModule--student params
+    parser.add_argument('--action_num', default=2, type=int)
+    parser.add_argument('--num_encoder', default=4, type=int)
 
     #train model params
     parser.add_argument('--epoch', default=5, type=int)
@@ -88,12 +91,13 @@ def train_model(teacher_model: nn.Module, student_model: nn.Module, train_data: 
             inputs = inputs.to(device)
             action_labels = action_labels.to(device)
 
-            tea_feature = teacher_model(inputs)
-            action_logits, stu_features = student_model(inputs)
+            return_dict = student_model(inputs, return_embed=True, return_feature=True)
+            input_embeds, stu_features, action_logits = return_dict['embeds'], return_dict['features'], return_dict['logits']
+            tea_features = teacher_model(input_embeds)
             
             sup_loss = cls_loss(action_logits, action_labels)
             con_loss = InfoCE(stu_features, action_labels)    # 对比损失，拉近相同标签的样本
-            kd_loss = KD_loss(tea_feature, stu_features)
+            kd_loss = KD_loss(tea_features, stu_features)
             loss = sup_loss + args.contrastive_alpha * con_loss + args.feature_beta * kd_loss 
 
             optimizer.zero_grad() 
@@ -120,6 +124,9 @@ def train_model(teacher_model: nn.Module, student_model: nn.Module, train_data: 
         targets = torch.cat(targets).numpy()
         print(f"Train Time the Accuracy Score of Model is:{accuracy_score(targets, preds):.4f}")
         
+        if args.scheduler:
+            scheduler.step()
+
         if eval:
             print("*** Start Evaluation with Eval Data ***")
             eval_model(student_model, eval_data, device, args=args)
@@ -182,8 +189,6 @@ def main():
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     
     teacher_model = build_LLM2Rec(
-        action_num=args.action_num,
-        domain_num=args.domain_num,
         llm_name=args.llm_name,
         d_model=args.d_model,
         input_dim=args.input_dim,
@@ -195,11 +200,18 @@ def main():
         frozen_llm_layer=args.frozen_llm_layer,
         batch_seq_len=args.time_length,
         lora=args.lora,
+        add_embed_layer=args.add_embed_layer,
         reprogramming=args.reprogramming,
     )
 
     # create student model
-    student_model = TimeModule
+    student_model = TimeModule(
+        class_num=args.action_num,
+        input_dim=args.input_dim,
+        embed_size=teacher_model.d_llm,
+        n_heads=args.n_heads,
+        num_encoder=args.num_encoder,
+    )
     
     # 4. Optimizer
     model_optimizer = optim.Adam(

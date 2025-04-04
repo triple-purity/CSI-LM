@@ -76,6 +76,7 @@ class DownLayer(nn.Module):
 
 class TimeModule(nn.Module):
     def __init__(self,
+                 class_num,
                  input_dim,
                  token_kernels,
                  llm_name, 
@@ -108,15 +109,15 @@ class TimeModule(nn.Module):
                 self.layers.append(EncoderLayer(embed_size, n_heads, head_dim, dropout))
 
         self.head_layer = nn.Sequential(
-            nn.Linear(embed_size, embed_size),
+            nn.Linear(embed_size, class_num),
             nn.Dropout(dropout),
         )
     def forward(self, 
                 x, 
-                decoder_mask=False, 
-                mask=None, 
-                return_embed = True, 
-                return_feature=True
+                decoder_mask = False, 
+                mask = None, 
+                return_embed = False, 
+                return_feature = False
             ):
         if decoder_mask and mask is not None:
             ValueError("mask should be provided when decoder_mask is False")
@@ -136,11 +137,17 @@ class TimeModule(nn.Module):
 
         return_dict = {'logits': x_logits} 
         if return_embed:
-            return_dict['embed'] = x_embed
+            return_dict['embeds'] = x_embed
         if return_feature:
-            return_dict['feature'] = x_input
+            return_dict['features'] = x_input
         return return_dict
-        
+    
+    def predict(self, x, mask=None):
+        return_dict = self.forward(x, mask=mask)
+        action_logits = return_dict['logits']
+        pre_labels = torch.argmax(action_logits, dim=-1)
+        return action_logits, pre_labels
+
 
 # 2. Create CSINet base Conv and Attention 
 # It's not used in the experiment.
@@ -200,7 +207,7 @@ class AttentionBlock(nn.Module):
         x = x * (F.sigmoid(spatial_att))
         return x
 
-# **有问题**
+# 
 class CSINet(nn.Module):
     def __init__(self, num_classes, in_channels, out_channels, unified_len=500, attn_blocks=3, bias=False):
         super(CSINet, self).__init__()
