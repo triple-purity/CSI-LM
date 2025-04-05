@@ -14,7 +14,6 @@ from torch.utils.data import DataLoader
 
 from dataset.datasets import CSI_Dataset, DFS_Dataset
 
-from models.embed import PositionalEmbedding, TokenEmbedding
 from models.LM_Base import build_LLM2Rec
 from models.StuModels import CSINet, TimeModule
 
@@ -92,12 +91,12 @@ def train_model(teacher_model: nn.Module, student_model: nn.Module, train_data: 
             action_labels = action_labels.to(device)
 
             return_dict = student_model(inputs, return_embed=True, return_feature=True)
-            input_embeds, stu_features, action_logits = return_dict['embeds'], return_dict['features'], return_dict['logits']
-            tea_features = teacher_model(input_embeds)
+            input_embeds, stu_features, stu_logits = return_dict['embeds'], return_dict['features'], return_dict['logits']
+            tea_logits = teacher_model(input_embeds)
             
-            sup_loss = cls_loss(action_logits, action_labels)
+            sup_loss = cls_loss(stu_logits, action_labels)
             con_loss = InfoCE(stu_features, action_labels)    # 对比损失，拉近相同标签的样本
-            kd_loss = KD_loss(tea_features, stu_features)
+            kd_loss = KD_loss(tea_logits, stu_logits)
             loss = sup_loss + args.contrastive_alpha * con_loss + args.feature_beta * kd_loss 
 
             optimizer.zero_grad() 
@@ -105,7 +104,7 @@ def train_model(teacher_model: nn.Module, student_model: nn.Module, train_data: 
             optimizer.step()
 
             # 正确率计算
-            pred_label = torch.argmax(action_logits, dim=-1)
+            pred_label = torch.argmax(stu_logits, dim=-1)
             pred_labels.append(pred_label.cpu())
             targets.append(action_labels.cpu())
             # 平均损失计算

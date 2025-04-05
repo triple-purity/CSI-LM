@@ -68,6 +68,7 @@ class ReprogrammingLayer(nn.Module):
 # 2. Network Based LLM
 class LLM2Rec(nn.Module):
     def __init__(self,
+                 class_num, 
                  llm_name,
                  d_model,
                  input_dim = 90,
@@ -131,7 +132,11 @@ class LLM2Rec(nn.Module):
             self.mapping_layer = nn.Linear(self.vocab_size, self.num_tokens)
             self.reprogramming_layer = ReprogrammingLayer(self.d_llm, self.n_heads, self.d_llm)
 
-
+        # 5. classification head
+        self.head_layer = nn.Sequential(
+            nn.Linear(self.d_llm, class_num),
+            nn.Dropout(dropout)
+        )
     def load_LLM(self):
         assert self.llm_name in llama_names or self.llm_name in gpt_names, f"LLM model {self.llm_name} is not defined"
 
@@ -234,6 +239,8 @@ class LLM2Rec(nn.Module):
         x_output = self.llm_model(inputs_embeds=x_input).last_hidden_state
         x_output = x_output[:,-1]
 
+        # 4. logits
+        x_output = self.head_layer(x_output)
         return x_output
     
 def build_time_embed(

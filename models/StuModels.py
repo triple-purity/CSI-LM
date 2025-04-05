@@ -63,11 +63,7 @@ class TimeModule(nn.Module):
 
         self.layers = nn.ModuleList()
         for i in range(num_encoder):
-            if i < num_encoder-1:
-                self.layers.append(EncoderLayer(embed_size, n_heads, head_dim, dropout))
-                self.layers.append(DownLayer(embed_size))
-            else:
-                self.layers.append(EncoderLayer(embed_size, n_heads, head_dim, dropout))
+            self.layers.append(EncoderLayer(embed_size, n_heads, head_dim, dropout))
 
         self.head_layer = nn.Sequential(
             nn.Linear(embed_size, class_num),
@@ -84,7 +80,7 @@ class TimeModule(nn.Module):
             ValueError("mask should be provided when decoder_mask is False")
 
         x_embed = self.time_embed(x)
-        x_input = torch.cat((self.cls_token.expand(x_embed.shape[0], 1, -1), x_embed ), dim=1)
+        x_input = torch.cat((self.cls_token.expand(x_embed.shape[0], 1, -1), x_embed), dim=1)
         x_input = self.position_embed(x_input)
         for layer in self.layers:
             if isinstance(layer, EncoderLayer):
