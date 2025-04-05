@@ -4,6 +4,11 @@ import torch.nn.functional as F
 from torch.nn.utils import weight_norm
 import math
 
+from models.Layers import MultiHeadAttention, RMSNorm 
+
+llama_names = ['unsloth/Llama-3.2-1B', 'Qwen/Qwen2.5-1.5B', 'deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B']
+gpt_names = ['openai-community/gpt2']
+
 class PositionalEmbedding(nn.Module):
     def __init__(self, c_out, max_len=5000):
         super(PositionalEmbedding, self).__init__()
@@ -74,3 +79,40 @@ class PatchEmbedding(nn.Module):
         # Input encoding
         output = self.value_embedding(x)
         return output, n_vars
+    
+# 4. Time Series Embedding
+class TimeEmbedding(nn.Module):
+    def __init__(self, input_dim, token_kernels, d_model, d_llm, n_heads, llm_name, dropout=0.1):
+        super(TimeEmbedding, self).__init__()
+
+        self.input_dim = input_dim
+        self.token_kernels = token_kernels
+        self.d_model = d_model
+        self.d_llm = d_llm
+        self.n_heads = n_heads
+
+        # token_embedding is used for [B,T,C]
+        # Multi Scale CNN + TokenEmbedding 
+        kernel_dims = [(((input_dim*kernel)//2),kernel) for kernel in token_kernels]
+        self.token_embeddings = nn.ModuleList(
+            [TokenEmbedding(input_dim, dim, kernel, padding=(kernel-1)//2) for dim, kernel in kernel_dims]
+        )
+        self.token_linear = nn.Sequential(
+            nn.Linear(sum([item for item,_ in kernel_dims]), self.d_model),
+            nn.GELU(),
+            nn.Dropout(dropout),
+            RMSNorm(self.d_model) if llm_name in llama_names else nn.LayerNorm(self.d_llm) 
+        )
+        self.token_embed = TokenEmbedding(self.d_model, self.d_llm, kernel=9, stride=4, padding=4)
+        self.atten_embed = MultiHeadAttention(self.d_llm, self.n_heads, dropout=dropout)
+    
+    def forward(self, x):
+        # 1. Token Embedding
+        conv_x = []
+        for layer in self.token_embeddings:
+            conv_x.append(layer(x))
+        x_cat = torch.cat(conv_x, dim=-1)
+        x_cat = self.token_linear(x_cat)
+        x_cat = self.token_embed(x_cat)
+        x_cat = self.atten_embed(x_cat)
+        return x_cat

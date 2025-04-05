@@ -4,46 +4,7 @@ import torch.nn.functional as F
 
 from models.embed import PositionalEmbedding
 from models.LM_Base import TimeEmbedding
-
-# 1. Create TimeModule base Transformer
-class MultiHeadAttention(nn.Module):
-    def __init__(self, embed_size, heads, head_dim=None, dropout=0.):
-        super(MultiHeadAttention, self).__init__()
-        self.embed_size = embed_size
-        self.heads = heads
-        self.head_dim = head_dim or embed_size // heads
-
-        self.values = nn.Linear(self.embed_size, self.head_dim*self.heads, bias=False)
-        self.keys = nn.Linear(self.embed_size, self.head_dim*self.heads, bias=False)
-        self.queries = nn.Linear(self.embed_size, self.head_dim*self.heads, bias=False)
-        self.fc_out = nn.Linear(heads * self.head_dim, embed_size)
-        self.dropout = nn.Dropout(dropout)
-
-    def forward(self, x, mask=None):
-        B, L, _ = x.shape
-        
-        # Split the embedding into self.heads different pieces
-        values = self.values(x).reshape(B, L, self.heads, -1).contiguous()
-        keys = self.keys(x).reshape(B, L, self.heads, -1).contiguous()
-        queries = self.queries(x).reshape(B, L, self.heads, -1).contiguous()
-
-        # Einsum does matrix multiplication for query*keys for each training example
-        # with every other training example, don't be confused by einsum
-        # it's just a way to do batch matrix multiplication
-        energy = torch.einsum("nqhd,nkhd->nhqk", [queries, keys])
-
-        # Mask padded indices so their weights become 0
-        if mask is not None:
-            energy = energy.masked_fill(mask == 0, float("-1e20"))
-
-        attention = torch.softmax(energy / (self.embed_size ** (1 / 2)), dim=3)
-
-        out = torch.einsum("nhql,nlhd->nqhd", [attention, values]).reshape(
-            B, L, self.heads * self.head_dim
-        )
-
-        out = self.fc_out(out)
-        return self.dropout(out)
+from models.Layers import MultiHeadAttention
     
 class EncoderLayer(nn.Module):
     def __init__(self, embed_size, heads, head_dim=None, dropout=0.):
