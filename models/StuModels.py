@@ -66,8 +66,13 @@ class TimeModule(nn.Module):
             self.layers.append(EncoderLayer(embed_size, n_heads, head_dim, dropout))
 
         self.head_layer = nn.Sequential(
-            nn.Linear(embed_size, class_num),
+            nn.Linear(embed_size, embed_size*4),
+            nn.GELU(),
             nn.Dropout(dropout),
+            nn.Linear(embed_size*4, embed_size),
+            nn.GELU(),
+            nn.Dropout(dropout),
+            nn.Linear(embed_size, class_num),
         )
     def forward(self, 
                 x, 

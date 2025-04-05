@@ -32,13 +32,13 @@ class CSI_GAN(nn.Module):
                  d_model,
                  input_dim = 90,
                  token_kernels=[5, 11, 21],
-                 trans_layer = 4,
                  n_heads=8,
                  llm_layers=12,  
                  start_layer=0,
                  frozen_llm_layer=10,
                  batch_seq_len=2000,
                  lora=False,
+                 add_embed_layer=True,
                  reprogramming=False,
                 ):
         super(CSI_GAN, self).__init__()
@@ -47,46 +47,39 @@ class CSI_GAN(nn.Module):
         self.domain_num = domain_num
 
         # 1. 特征提取器
-        self.time_embed_model, self.feature_extracter = build_LLM2Rec(
+        self.feature_extracter = build_LLM2Rec(
+                                    action_num,
                                     llm_name,
                                     d_model,
                                     input_dim = input_dim,
                                     token_kernels=token_kernels,
-                                    trans_layer = trans_layer,
                                     n_heads=n_heads,
                                     llm_layers=llm_layers,  
                                     start_layer=start_layer,
                                     frozen_llm_layer=frozen_llm_layer,
                                     batch_seq_len=batch_seq_len,
                                     lora=lora,
+                                    add_embed_layer=add_embed_layer,
                                     reprogramming=reprogramming
                                 )
         
-        # 2. Action Recognition Net
-        self.action_net = RecNet(
-            self.action_num, 
-            self.feature_extracter.d_llm
-        )
-
-        # 3. Domain Recognition Net
+        # 2. Domain Recognition Net
         self.domain_net = RecNet(
             self.domain_num, 
             self.feature_extracter.d_llm+self.action_num
         )
 
     def forward(self, x):
-        x = self.time_embed_model(x)
-        x = self.feature_extracter(x)
-        action_logits = self.action_net(x)
+        lm_outdict = self.feature_extracter.forward(x, return_feature=True)
+        features, action_logits = lm_outdict['features'], lm_outdict['logits']
 
-        domain_input = torch.cat([x, action_logits], dim=-1)
+        domain_input = torch.cat([features, action_logits], dim=-1)
         domain_logits = self.domain_net(domain_input)
 
         return action_logits, domain_logits
 
     def predict(self, x):
-        x = self.time_embed_model(x)
-        x = self.feature_extracter(x)
-        action_logits = self.action_net(x)
+        lm_outdict = self.feature_extracter(x)
+        features, action_logits = lm_outdict['features'], lm_outdict['logits']
         pred_action = torch.argmax(action_logits, dim=-1)
         return action_logits, pred_action

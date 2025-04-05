@@ -90,9 +90,10 @@ def train_model(teacher_model: nn.Module, student_model: nn.Module, train_data: 
             inputs = inputs.to(device)
             action_labels = action_labels.to(device)
 
-            return_dict = student_model(inputs, return_embed=True, return_feature=True)
-            input_embeds, stu_features, stu_logits = return_dict['embeds'], return_dict['features'], return_dict['logits']
-            tea_logits = teacher_model(input_embeds)
+            stu_out_dict = student_model(inputs, return_embed=True, return_feature=True)
+            input_embeds, stu_features, stu_logits = stu_out_dict['embeds'], stu_out_dict['features'], stu_out_dict['logits']
+            tea_out_dict = teacher_model(input_embeds)
+            tea_logits = tea_out_dict['logits'] 
             
             sup_loss = cls_loss(stu_logits, action_labels)
             con_loss = InfoCE(stu_features, action_labels)    # 对比损失，拉近相同标签的样本

@@ -73,7 +73,6 @@ class LLM2Rec(nn.Module):
                  d_model,
                  input_dim = 90,
                  token_kernels=[5, 11, 21],
-                 trans_layer = 3,
                  n_heads = 8,
                  llm_layers=12,
                  frozen_llm_layer=8,
@@ -91,7 +90,6 @@ class LLM2Rec(nn.Module):
         self.seq_len = batch_seq_len
         self.d_model = d_model
         
-        self.trans_layer = trans_layer
         self.n_heads = n_heads
 
         self.add_embed_layer = add_embed_layer
@@ -134,8 +132,13 @@ class LLM2Rec(nn.Module):
 
         # 5. classification head
         self.head_layer = nn.Sequential(
+            nn.Linear(self.d_llm, self.d_llm*4),
+            nn.GELU(),
+            nn.Dropout(dropout),
+            nn.Linear(self.d_llm*4, self.d_llm),
+            nn.GELU(),
+            nn.Dropout(dropout),
             nn.Linear(self.d_llm, class_num),
-            nn.Dropout(dropout)
         )
     def load_LLM(self):
         assert self.llm_name in llama_names or self.llm_name in gpt_names, f"LLM model {self.llm_name} is not defined"
@@ -207,7 +210,7 @@ class LLM2Rec(nn.Module):
             else:
                 break
 
-    def forward(self, x):
+    def forward(self, x, return_feature=False):
         """
         parameters:
             x: B, T, C -- It is embedded by TimeEmbedding or origin data
@@ -240,8 +243,11 @@ class LLM2Rec(nn.Module):
         x_output = x_output[:,-1]
 
         # 4. logits
-        x_output = self.head_layer(x_output)
-        return x_output
+        x_logits = self.head_layer(x_output)
+        return_dict = {'logits': x_logits}
+        if return_feature:
+            return_dict['features'] = x_output
+        return return_dict
     
 def build_time_embed(
         input_dim,
@@ -262,11 +268,11 @@ def build_time_embed(
     return time_embed_model
 
 def build_LLM2Rec(
+        class_num,
         llm_name, 
         d_model,
         input_dim = 90,
         token_kernels=[5, 11, 21],
-        trans_layer = 4,
         n_heads=8,
         llm_layers=12,  
         start_layer=0,
@@ -278,11 +284,11 @@ def build_LLM2Rec(
     )-> LLM2Rec:
 
     lm_model = LLM2Rec(
+            class_num=class_num,
             llm_name=llm_name,
             d_model=d_model,
             input_dim=input_dim,
             token_kernels=token_kernels,
-            trans_layer=trans_layer,
             n_heads=n_heads,
             llm_layers=llm_layers,
             frozen_llm_layer=frozen_llm_layer,
