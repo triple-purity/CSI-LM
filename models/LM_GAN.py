@@ -80,6 +80,6 @@ class CSI_GAN(nn.Module):
 
     def predict(self, x):
         lm_outdict = self.feature_extracter(x)
-        features, action_logits = lm_outdict['features'], lm_outdict['logits']
+        action_logits =  lm_outdict['logits']
         pred_action = torch.argmax(action_logits, dim=-1)
         return action_logits, pred_action

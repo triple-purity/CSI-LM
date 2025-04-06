@@ -111,7 +111,7 @@ class LLM2Rec(nn.Module):
                 input_dim = input_dim, 
                 token_kernels = token_kernels, 
                 d_model = d_model, 
-                d_llm = d_model, 
+                d_llm = self.d_llm, 
                 n_heads=self.n_heads,
                 llm_name = llm_name,
                 dropout = dropout,    

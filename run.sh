@@ -1,1 +1,1 @@
-python distillation/llm_distillation.py 
+python distillation/llm_distillation.py --data_path  \--output_dir  \--antenna_num 2 \--time_length 600 \--extract_method csi-ratio \--data_norm_type mean_std \--data_key csi-ratio \--reprogramming True \--epoch 60 \--lr 1e-4 \

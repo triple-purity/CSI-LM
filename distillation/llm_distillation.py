@@ -39,11 +39,10 @@ def get_args_parser():
     parser.add_argument('--data_key', default='csi_data', type=str)
     
     # create lm_model--teacher params
-    parser.add_argument('--llm_name', default='unsloth/Qwen2.5-1.5B', type=str)
+    parser.add_argument('--llm_name', default='openai-community/gpt2', type=str)
     parser.add_argument('--d_model', default=1024, type=int)
     parser.add_argument('--input_dim', default=90, type=int)
     parser.add_argument('--token_kernels', default=[5, 11, 21], type=int, nargs='+')
-    parser.add_argument('--trans_layer', default=4, type=int)
     parser.add_argument('--n_heads', default=8, type=int)
     parser.add_argument('--llm_layers', default=12, type=int)
     parser.add_argument('--start_layer', default=0, type=int)
@@ -53,8 +52,8 @@ def get_args_parser():
     parser.add_argument('--reprogramming', default=False, type=bool)
 
     # create TimeModule--student params
-    parser.add_argument('--action_num', default=2, type=int)
-    parser.add_argument('--num_encoder', default=4, type=int)
+    parser.add_argument('--action_num', default=6, type=int)
+    parser.add_argument('--num_encoder', default=6, type=int)
 
     #train model params
     parser.add_argument('--epoch', default=5, type=int)
@@ -189,11 +188,11 @@ def main():
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     
     teacher_model = build_LLM2Rec(
+        class_num=args.action_num,
         llm_name=args.llm_name,
         d_model=args.d_model,
         input_dim=args.input_dim,
         token_kernels=args.token_kernels,
-        trans_layer=args.trans_layer,
         n_heads=args.n_heads,
         llm_layers=args.llm_layers,
         start_layer=args.start_layer,
