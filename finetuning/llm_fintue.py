@@ -2,6 +2,7 @@ import argparse
 import os
 from typing import Optional, List, Tuple
 import numpy as np
+from tqdm.auto import tqdm
 from itertools import chain
 
 import torch
@@ -11,14 +12,14 @@ import torch.optim as optim
 from torch.optim.lr_scheduler import LambdaLR
 from torch.utils.data import DataLoader
 
-from dataset.datasets import CSI_Dataset, DFS_Dataset
-from models.LM_Base import LLM2Rec, build_LLM2Rec
-from models.LM_GAN import CSI_GAN
-from utils.train_util import confidence_loss
+from dataset.datasets import CSI_Dataset
 
-from tqdm.auto import tqdm
+from models.LM_Base import build_LLM2Rec
+from models.StuModels import CSINet, TimeModule
+
 from dataset.data import get_csi_data
-from sklearn.metrics import f1_score, accuracy_score, recall_score, precision_score
+from utils.train_util import InfoCE, KD_loss, feature_loss
+from sklearn.metrics import accuracy_score, precision_score
 
 def get_args_parser():
     parser = argparse.ArgumentParser()
@@ -32,109 +33,96 @@ def get_args_parser():
 
     # data process params
     parser.add_argument('--antenna_num', default=3, type=int, help='the number of antenna')
-    parser.add_argument('--time_length', default=500, type=int)
+    parser.add_argument('--time_length', default=700, type=int)
     parser.add_argument('--extract_method', default='amplitude', type=str, help='amplitude or csi-ratio or dfs')
     parser.add_argument('--data_norm_type', default='min_max_1', type=str, help='min_max_1 or min_max_2 or mean_std')
     parser.add_argument('--data_key', default='csi_data', type=str)
     
-    # create model params
-    parser.add_argument('--action_num', default=2, type=int)
-    parser.add_argument('--domain_num', default=4, type=int)
-    parser.add_argument('--llm_name', default='unsloth/Qwen2.5-1.5B', type=str)
+    # create lm_model--teacher params
+    parser.add_argument('--action_num', default=6, type=int)
+    parser.add_argument('--llm_name', default='openai-community/gpt2', type=str)
     parser.add_argument('--d_model', default=1024, type=int)
     parser.add_argument('--input_dim', default=90, type=int)
     parser.add_argument('--token_kernels', default=[5, 11, 21], type=int, nargs='+')
-    parser.add_argument('--trans_layer', default=4, type=int)
     parser.add_argument('--n_heads', default=8, type=int)
     parser.add_argument('--llm_layers', default=12, type=int)
     parser.add_argument('--start_layer', default=0, type=int)
     parser.add_argument('--frozen_llm_layer', default=12, type=int)
     parser.add_argument('--lora', default=False, type=bool)
+    parser.add_argument('--add_embed_layer', default=True, type=bool)
     parser.add_argument('--reprogramming', default=False, type=bool)
 
     #train model params
     parser.add_argument('--epoch', default=5, type=int)
-    parser.add_argument('--batch_size', default=8, type=int)
-    parser.add_argument('--action_lr', default=2e-5, type=float)
-    parser.add_argument('--domain_lr', default=1e-5, type=float)
-    parser.add_argument('--action_scheduler', default=False, type=bool)
-    parser.add_argument('--domain_scheduler', default=False, type=bool)
-    parser.add_argument('--init_action_epoch', default=1, type=int)
-    parser.add_argument('--init_domain_epoch', default=4, type=int)
+    parser.add_argument('--batch_size', default=16, type=int)
+    parser.add_argument('--noise', default=0.0, type=float)
+    parser.add_argument('--lr', default=2e-5, type=float)
+    parser.add_argument('--scheduler', default=True, type=bool)
     parser.add_argument('--weight_deacy', default=0.0, type=float)
-    parser.add_argument('--label_smooth_rate', default=0.02, type=float)
-    parser.add_argument('--domain_alpha', default=0.05, type=float)
-    parser.add_argument('--conf_beta', default=0.05, type=int)
+    parser.add_argument('--label_smooth_rate', default=0.05, type=float)
+    parser.add_argument('--contrastive_alpha', default=0., type=float)
     args = parser.parse_args()
     return args
 
-def train_model(model, train_data, start_epoch, epochs, optimizer: dict, scheduler: dict, 
-                device, args, eval_data: Optional[DataLoader] = None, eval=False):
+def train_model(model: nn.Module, train_data: DataLoader, eval_data: DataLoader,
+                start_epoch, epochs, optimizer, scheduler, device, args, eval=True):
+    torch.autograd.set_detect_anomaly(True) 
+    # 确定损失函数组成
     cls_loss = nn.CrossEntropyLoss(label_smoothing=args.label_smooth_rate)
     Avg_Loss = list()
 
-    torch.autograd.set_detect_anomaly(True) 
-    
     for epoch in range(start_epoch, epochs):
-        print('*** Start TRAINING Model ***')
+        print('*** Start Training Model with Train Data ***')
         model.train()
         model.to(device)
-        epoch_temp = epoch%(args.init_domain_epoch+args.init_action_epoch)
 
         pred_labels = []
         targets = []
-        avg_action_loss, avg_domain_loss = 0, 0
+        avg_loss, avg_sup_loss, avg_con_loss = 0, 0, 0
         bar = tqdm(enumerate(train_data), total=len(train_data))
-        for i,(inputs, action_labels, domain_labels) in bar:
+        for i,(inputs, action_labels, _) in bar:
             inputs = inputs.to(device)
             action_labels = action_labels.to(device)
-            domain_labels = domain_labels.to(device)
 
-            action_logits, domain_logits = model(inputs)
-            
-            if epoch_temp<args.init_domain_epoch:
-                domain_loss = cls_loss(domain_logits, domain_labels)
-                avg_domain_loss = (avg_domain_loss * (i) + domain_loss.item())/(i+1)
-                domain_loss.backward()
-                optimizer['domain'].step()
-                optimizer['domain'].zero_grad()
-            else:
-                action_loss = cls_loss(action_logits, action_labels)
-                domain_loss = cls_loss(domain_logits, domain_labels)
-                conf_loss = confidence_loss(action_logits)
-                avg_action_loss = (avg_action_loss * i + action_loss.item())/(i+1)
-                loss = action_loss - args.domain_alpha * domain_loss + args.conf_beta*conf_loss
-                loss.backward()
-                optimizer['action'].step()
-                optimizer['action'].zero_grad()
+            out_dict = model(inputs, return_feature=True)
+            features, logits =  out_dict['features'], out_dict['logits'] 
+        
+            sup_loss = cls_loss(logits, action_labels)
+            con_loss = InfoCE(features, action_labels)    # 对比损失，拉近相同标签的样本
+            loss = sup_loss + args.contrastive_alpha * con_loss
 
-            bar.set_description(
-                desc = f'Epoch {epoch}/{epochs}: Avg Action Loss: {avg_action_loss:.4f}|| Avg Domain Loss: {avg_domain_loss:.4f}'
-            )
+            optimizer.zero_grad() 
+            loss.backward()
+            optimizer.step()
 
-            #正确率
-            pred_label = torch.argmax(action_logits, dim=-1)
+            # 正确率计算
+            pred_label = torch.argmax(logits, dim=-1)
             pred_labels.append(pred_label.cpu())
             targets.append(action_labels.cpu())
-        
-        Avg_Loss.append(avg_action_loss)
+            # 平均损失计算
+            avg_loss = (avg_loss*i+loss.item())/(i+1)
+            avg_sup_loss = (avg_sup_loss*i+sup_loss.item())/(i+1)
+            avg_con_loss = (avg_con_loss*i+con_loss.item())/(i+1)
+
+            bar.set_description(
+                desc=f"Epoch:{epoch+1}/{epochs}--Loss:{avg_loss:.4f} ||Supervised_Loss:{avg_sup_loss:.4f} && Contrastive_Loss:{avg_con_loss:.4f}")
+         
+        Avg_Loss.append(avg_loss)
         preds = torch.cat(pred_labels).numpy()
         targets = torch.cat(targets).numpy()
-        print(f"Train Time the Accuracy Score of Model is:{accuracy_score(targets, preds)}")
+        print(f"Train Time the Accuracy Score of Model is:{accuracy_score(targets, preds):.4f}")
+        
+        if args.scheduler:
+            scheduler.step()
 
-        if args.action_scheduler:
-            if epoch_temp>=args.init_domain_epoch:
-                scheduler['action'].step()
-        if args.domain_scheduler:
-            if epoch_temp<args.init_domain_epoch:
-                scheduler['domain'].step()
-
-        if eval and epoch_temp>=args.init_domain_epoch:
-            print("***** Start Evaluation with Eval Data *****")
+        if eval:
+            print("*** Start Evaluation with Eval Data ***")
             eval_model(model, eval_data, device, args=args)
     return Avg_Loss
 
+global_eval_acc = 0.80
 def eval_model(model, eval_data, device, args):
+    global global_eval_acc
     model.to(device)
     model.eval()
     loss_fun = nn.CrossEntropyLoss()
@@ -142,7 +130,6 @@ def eval_model(model, eval_data, device, args):
     pred_labels = []
     targets = []
 
-    print("*** Evaluation ***")
     eval_avg_loss = 0
     with torch.no_grad():
         bar = tqdm(enumerate(eval_data), total=len(eval_data))
@@ -159,9 +146,13 @@ def eval_model(model, eval_data, device, args):
 
         preds = torch.cat(pred_labels).numpy()
         targets = torch.cat(targets).numpy()
-        print(f"The Avg Loss of model is:{eval_avg_loss}")
-        print(f"The Accuracy score of model is:{accuracy_score(targets, preds)}")
-        
+        eval_acc = accuracy_score(targets, preds)
+        print(f"The Avg Loss of Model is:{eval_avg_loss}")
+        print(f"Eval Time the Accuracy Score of Model is:{eval_acc:.4f}")
+        if eval_acc > global_eval_acc:
+            global_eval_acc = eval_acc
+            torch.save(model.state_dict(), os.path.join(args.output_dir, f'LLM_{eval_acc:.4f}.pth'))
+
 def main():
     args = get_args_parser()
     print(args)
@@ -176,7 +167,7 @@ def main():
                                 train_domain_labels[2], antenna_num=args.antenna_num, 
                                 unified_length=args.time_length, 
                                 extract_method=args.extract_method, 
-                                data_key=args.data_key, norm_type=args.data_norm_type)
+                                data_key=args.data_key, norm_type=args.data_norm_type, noise=args.noise)
     eval_dataset = CSI_Dataset(eval_datas[2], eval_gesture_labels[2], 
                                eval_domain_labels[2], antenna_num=args.antenna_num,
                                unified_length=args.time_length, 
@@ -189,48 +180,40 @@ def main():
     # 3. Model
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     
-    gan_model = CSI_GAN(
-        action_num=args.action_num,
-        domain_num=args.domain_num,
+    model = build_LLM2Rec(
+        class_num=args.action_num,
         llm_name=args.llm_name,
         d_model=args.d_model,
         input_dim=args.input_dim,
         token_kernels=args.token_kernels,
-        trans_layer=args.trans_layer,
         n_heads=args.n_heads,
         llm_layers=args.llm_layers,
         start_layer=args.start_layer,
         frozen_llm_layer=args.frozen_llm_layer,
         batch_seq_len=args.time_length,
         lora=args.lora,
+        add_embed_layer=args.add_embed_layer,
         reprogramming=args.reprogramming,
     )
     
     # 4. Optimizer
-    action_optimizer = optim.Adam(
-        chain(gan_model.feature_extracter.parameters(),gan_model.action_net.parameters()),
-        lr=args.action_lr, 
+    model_optimizer = optim.Adam(
+        model.parameters(),
+        lr=args.lr, 
         weight_decay=args.weight_deacy
     )
-    domain_optimizer = optim.Adam(
-        gan_model.domain_net.parameters(),
-        lr=args.domain_lr, 
-        weight_decay=args.weight_deacy
-    )
-    optimizer = {'action': action_optimizer, 'domain':domain_optimizer}
    
     # 5. Scheduler
-    scheduler = {}
-    if args.action_scheduler:
-        action_scheduler = optim.lr_scheduler.CosineAnnealingLR(action_optimizer, T_max= args.epoch, eta_min=5e-6)
-        scheduler['action'] = action_scheduler
-    if args.domain_scheduler:
-        domain_scheduler = optim.lr_scheduler.CosineAnnealingLR(domain_optimizer, T_max= args.epoch, eta_min=5e-6)
-        scheduler['domain'] = domain_scheduler
+    scheduler = None
+    if args.scheduler:
+        scheduler = optim.lr_scheduler.CosineAnnealingLR(model_optimizer, T_max= args.epoch, eta_min=5e-6)
 
     # 6. Train
-    train_model(gan_model, train_loader, 0, args.epoch, optimizer, scheduler,
-                device, args, eval_data=eval_loader, eval=True)
+    train_model(model, train_data=train_loader, eval_data=eval_loader, 
+                start_epoch=0, epochs=args.epoch, optimizer=model_optimizer, scheduler=scheduler, 
+                device=device, args=args, eval=True)
+    
     
 if __name__ == '__main__':
     main()
+

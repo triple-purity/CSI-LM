@@ -12,13 +12,13 @@ import torch.optim as optim
 from torch.optim.lr_scheduler import LambdaLR
 from torch.utils.data import DataLoader
 
-from dataset.datasets import CSI_Dataset, DFS_Dataset
+from dataset.datasets import CSI_Dataset
 
 from models.LM_Base import build_LLM2Rec
 from models.StuModels import CSINet, TimeModule
 
 from dataset.data import get_csi_data
-from utils.train_util import InfoCE, KD_loss
+from utils.train_util import InfoCE, KD_loss, feature_loss
 from sklearn.metrics import accuracy_score, precision_score
 
 def get_args_parser():
@@ -33,7 +33,7 @@ def get_args_parser():
 
     # data process params
     parser.add_argument('--antenna_num', default=3, type=int, help='the number of antenna')
-    parser.add_argument('--time_length', default=500, type=int)
+    parser.add_argument('--time_length', default=700, type=int)
     parser.add_argument('--extract_method', default='amplitude', type=str, help='amplitude or csi-ratio or dfs')
     parser.add_argument('--data_norm_type', default='min_max_1', type=str, help='min_max_1 or min_max_2 or mean_std')
     parser.add_argument('--data_key', default='csi_data', type=str)
@@ -53,25 +53,28 @@ def get_args_parser():
 
     # create TimeModule--student params
     parser.add_argument('--action_num', default=6, type=int)
-    parser.add_argument('--num_encoder', default=6, type=int)
+    parser.add_argument('--num_encoder', default=4, type=int)
+    parser.add_argument('--decoder_mask', default=True, type=bool)
 
     #train model params
     parser.add_argument('--epoch', default=5, type=int)
-    parser.add_argument('--batch_size', default=8, type=int)
+    parser.add_argument('--batch_size', default=16, type=int)
+    parser.add_argument('--noise', default=0., type=float)
     parser.add_argument('--lr', default=2e-5, type=float)
-    parser.add_argument('--scheduler', default=False, type=bool)
+    parser.add_argument('--scheduler', default=True, type=bool)
     parser.add_argument('--weight_deacy', default=0.0, type=float)
-    parser.add_argument('--label_smooth_rate', default=0.05, type=float)
-    parser.add_argument('--contrastive_alpha', default=1., type=float)
-    parser.add_argument('--kd_beta', default=0.5, type=int)
+    parser.add_argument('--label_smooth_rate', default=0.0, type=float)
+    parser.add_argument('--fea_gama', default=0.01, type=int)
+    parser.add_argument('--contrastive_alpha', default=0.001, type=float)
+    parser.add_argument('--kd_beta', default=0.15, type=int)
     args = parser.parse_args()
     return args
 
 def train_model(teacher_model: nn.Module, student_model: nn.Module, train_data: DataLoader, eval_data: DataLoader,
-                start_epoch, epochs, optimizer, scheduler, device, args):
+                start_epoch, epochs, optimizer, scheduler, device, args, eval=True):
     torch.autograd.set_detect_anomaly(True) 
     # 确定损失函数组成
-    cls_loss = nn.CrossEntropyLoss(args.label_smooth_rate)
+    cls_loss = nn.CrossEntropyLoss(label_smoothing=args.label_smooth_rate)
     Avg_Loss = list()
 
     for epoch in range(start_epoch, epochs):
@@ -83,21 +86,27 @@ def train_model(teacher_model: nn.Module, student_model: nn.Module, train_data: 
 
         pred_labels = []
         targets = []
-        avg_loss, avg_sup_loss, avg_con_loss, avg_kd_loss = 0, 0, 0, 0
+        avg_loss, avg_sup_loss_stu, avg_sup_loss_tea, avg_fea_loss, avg_con_loss, avg_kd_loss = 0, 0, 0, 0, 0, 0
         bar = tqdm(enumerate(train_data), total=len(train_data))
         for i,(inputs, action_labels, _) in bar:
+            B, K, T, C = inputs.shape
+            if args.extract_method == 'csi-ratio':
+                inputs = inputs.reshape(B*K, T, -1)
+                action_labels = action_labels.flatten(0)
             inputs = inputs.to(device)
             action_labels = action_labels.to(device)
 
-            stu_out_dict = student_model(inputs, return_embed=True, return_feature=True)
+            stu_out_dict = student_model(inputs, decoder_mask=args.decoder_mask, return_embed=True, return_feature=True)
             input_embeds, stu_features, stu_logits = stu_out_dict['embeds'], stu_out_dict['features'], stu_out_dict['logits']
-            tea_out_dict = teacher_model(input_embeds)
-            tea_logits = tea_out_dict['logits'] 
+            tea_out_dict = teacher_model(input_embeds, return_feature=True)
+            tea_features, tea_logits =  tea_out_dict['features'], tea_out_dict['logits'] 
             
-            sup_loss = cls_loss(stu_logits, action_labels)
+            sup_loss_stu = cls_loss(stu_logits, action_labels)
+            sup_loss_tea = cls_loss(tea_logits, action_labels)
+            fea_loss = feature_loss(stu_features, tea_features)
             con_loss = InfoCE(stu_features, action_labels)    # 对比损失，拉近相同标签的样本
             kd_loss = KD_loss(tea_logits, stu_logits)
-            loss = sup_loss + args.contrastive_alpha * con_loss + args.kd_beta * kd_loss 
+            loss = (1-args.kd_beta)*sup_loss_stu + args.kd_beta * kd_loss + sup_loss_tea + args.fea_gama*fea_loss + args.contrastive_alpha * con_loss
 
             optimizer.zero_grad() 
             loss.backward()
@@ -109,15 +118,15 @@ def train_model(teacher_model: nn.Module, student_model: nn.Module, train_data: 
             targets.append(action_labels.cpu())
             # 平均损失计算
             avg_loss = (avg_loss*i+loss.item())/(i+1)
-            avg_sup_loss = (avg_sup_loss*i+sup_loss.item())/(i+1)
+            avg_sup_loss_stu = (avg_sup_loss_stu*i+sup_loss_stu.item())/(i+1)
+            avg_sup_loss_tea = (avg_sup_loss_tea*i+sup_loss_tea.item())/(i+1)
+            avg_fea_loss = (avg_fea_loss*i+fea_loss.item())/(i+1)
             avg_con_loss = (avg_con_loss*i+con_loss.item())/(i+1)
             avg_kd_loss = (avg_kd_loss*i+kd_loss.item())/(i+1)
 
             bar.set_description(
-                desc=f"Epoch:{epoch+1}/{epochs}--Loss:{avg_loss:.4f} ||\
-                        Supervised_Loss:{avg_sup_loss:.4f} && Contrastive_Loss:{avg_con_loss.item():.4f} && \
-                        KD_Loss:{avg_kd_loss.item():.4f}")
-        
+                desc=f"Epoch:{epoch+1}/{epochs}--Loss:{avg_loss:.4f} ||Supervised_Loss_Tea:{avg_sup_loss_tea:.4f} && Supervised_Loss_Stu:{avg_sup_loss_stu:.4f} && Feature_Loss:{avg_fea_loss:.4f} && Contrastive_Loss:{avg_con_loss:.4f} && KD_Loss:{avg_kd_loss:.4f}")
+         
         Avg_Loss.append(avg_loss)
         preds = torch.cat(pred_labels).numpy()
         targets = torch.cat(targets).numpy()
@@ -131,8 +140,9 @@ def train_model(teacher_model: nn.Module, student_model: nn.Module, train_data: 
             eval_model(student_model, eval_data, device, args=args)
     return Avg_Loss
 
-
+global_eval_acc = 0.80
 def eval_model(model, eval_data, device, args):
+    global global_eval_acc
     model.to(device)
     model.eval()
     loss_fun = nn.CrossEntropyLoss()
@@ -144,10 +154,14 @@ def eval_model(model, eval_data, device, args):
     with torch.no_grad():
         bar = tqdm(enumerate(eval_data), total=len(eval_data))
         for i,(inputs, action_labels, _) in bar:
+            B, K, T, C = inputs.shape
+            if args.extract_method == 'csi-ratio':
+                inputs = inputs.reshape(B*K, T, -1)
+                action_labels = action_labels.flatten(0)
             inputs = inputs.to(device)
             action_labels = action_labels.to(device)
             
-            action_logits, pre_actions = model.predict(inputs)
+            action_logits, pre_actions = model.predict(inputs, decoder_mask=args.decoder_mask)
             eval_loss = loss_fun(action_logits, action_labels)
             eval_avg_loss = (eval_avg_loss * i + eval_loss.item())/(i+1)
 
@@ -156,9 +170,12 @@ def eval_model(model, eval_data, device, args):
 
         preds = torch.cat(pred_labels).numpy()
         targets = torch.cat(targets).numpy()
+        eval_acc = accuracy_score(targets, preds)
         print(f"The Avg Loss of Model is:{eval_avg_loss}")
-        print(f"Eval Time the Accuracy Score of Model is:{accuracy_score(targets, preds)}")
-
+        print(f"Eval Time the Accuracy Score of Model is:{eval_acc:.4f}")
+        if eval_acc > global_eval_acc:
+            global_eval_acc = eval_acc
+            torch.save(model.state_dict(), os.path.join(args.output_dir, f'student_model.pth'))
 
 def main():
     args = get_args_parser()
@@ -169,14 +186,14 @@ def main():
         args.data_path,
         select_domains = args.data_domains,
     )
-
-    train_dataset = CSI_Dataset(train_datas[2], train_gesture_labels[2], 
-                                train_domain_labels[2], antenna_num=args.antenna_num, 
+    select_data = 1
+    train_dataset = CSI_Dataset(train_datas[select_data], train_gesture_labels[select_data], 
+                                train_domain_labels[select_data], antenna_num=args.antenna_num, 
                                 unified_length=args.time_length, 
                                 extract_method=args.extract_method, 
-                                data_key=args.data_key, norm_type=args.data_norm_type)
-    eval_dataset = CSI_Dataset(eval_datas[2], eval_gesture_labels[2], 
-                               eval_domain_labels[2], antenna_num=args.antenna_num,
+                                data_key=args.data_key, norm_type=args.data_norm_type, noise=args.noise)
+    eval_dataset = CSI_Dataset(eval_datas[select_data], eval_gesture_labels[select_data], 
+                               eval_domain_labels[select_data], antenna_num=args.antenna_num,
                                unified_length=args.time_length, 
                                extract_method=args.extract_method, 
                                data_key=args.data_key, norm_type=args.data_norm_type)
@@ -209,6 +226,7 @@ def main():
         input_dim=args.input_dim,
         token_kernels=args.token_kernels,
         llm_name=args.llm_name,
+        d_model=args.d_model,
         embed_size=teacher_model.d_llm,
         n_heads=args.n_heads,
         num_encoder=args.num_encoder,
@@ -225,7 +243,7 @@ def main():
     scheduler = None
     if args.scheduler:
         scheduler = optim.lr_scheduler.CosineAnnealingLR(model_optimizer, T_max= args.epoch, eta_min=5e-6)
-        
+
     # 6. Train
     train_model(teacher_model, student_model, train_data=train_loader, eval_data=eval_loader, 
                 start_epoch=0, epochs=args.epoch, optimizer=model_optimizer, scheduler=scheduler, 
