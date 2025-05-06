@@ -10,18 +10,21 @@ llama_names = ['unsloth/Llama-3.2-1B', 'Qwen/Qwen2.5-1.5B', 'deepseek-ai/DeepSee
 gpt_names = ['openai-community/gpt2']
 
 class PositionalEmbedding(nn.Module):
-    def __init__(self, c_out, max_len=5000):
+    def __init__(self, c_out, max_len=2000, learnable=False):
         super(PositionalEmbedding, self).__init__()
         # Compute the positional encodings once in log space.
         pe = torch.zeros(max_len, c_out).float()
-        pe.require_grad = False
+        if learnable:
+            pe = nn.Parameter(pe, requires_grad=True)
+            nn.init.uniform_(pe, -0.1, 0.1)
+        else:
+            pe.require_grad = False
+            position = torch.arange(0, max_len).float().unsqueeze(1)
+            div_term = (torch.arange(0, c_out, 2).float()
+                        * -(math.log(10000.0) / c_out)).exp()
 
-        position = torch.arange(0, max_len).float().unsqueeze(1)
-        div_term = (torch.arange(0, c_out, 2).float()
-                    * -(math.log(10000.0) / c_out)).exp()
-
-        pe[:, 0::2] = torch.sin(position * div_term)
-        pe[:, 1::2] = torch.cos(position * div_term)
+            pe[:, 0::2] = torch.sin(position * div_term)
+            pe[:, 1::2] = torch.cos(position * div_term)
 
         pe = pe.unsqueeze(0)
         self.register_buffer('pe', pe)
@@ -101,7 +104,7 @@ class TimeEmbedding(nn.Module):
             nn.Linear(sum([item for item,_ in kernel_dims]), self.d_model),
             nn.GELU(),
             nn.Dropout(dropout),
-            RMSNorm(self.d_model) if llm_name in llama_names else nn.LayerNorm(self.d_llm) 
+            RMSNorm(self.d_model) if llm_name in llama_names else nn.LayerNorm(self.d_model) 
         )
         self.token_embed = TokenEmbedding(self.d_model, self.d_llm, kernel=9, stride=4, padding=4)
         self.atten_embed = MultiHeadAttention(self.d_llm, self.n_heads, dropout=dropout)

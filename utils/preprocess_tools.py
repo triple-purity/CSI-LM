@@ -4,6 +4,7 @@ from numpy.linalg import svd
 import pywt
 from scipy.signal import stft, get_window, windows, filtfilt, lfilter, butter
 from scipy.interpolate import interp1d, CubicSpline, splev, splrep
+from sklearn.preprocessing import StandardScaler
 from sklearn.decomposition import PCA
 
 # 1. Create CSI-Ratio from CSI
@@ -229,7 +230,7 @@ def wavelet_denoise(signal, wavelet='db4', level=None, threshold_mode='soft', mo
         
         return denoised_signal
 
-def DWT_Denoise(csi_data, wavelet='db4', level=None, threshold_mode='soft', mode='sym', n_jobs=None):
+def DWT_Denoise(csi_data, wavelet='db3', level=5, threshold_mode='soft', mode='sym', n_jobs=None):
     """
     对CSI数据进行小波去噪（支持并行处理）
     
@@ -268,7 +269,45 @@ def DWT_Denoise(csi_data, wavelet='db4', level=None, threshold_mode='soft', mode
     
     return csi_denoised
 
-# 7. Extract DFS From CSI
+# 5. PCA去噪
+def butter_bandpass_filter(csi_data, highcut=200, fs=1000, order=5):
+    def butter_lowpass(cutoff, fs, order=5):
+        nyq = 0.5 * fs  # Nyquist频率
+        normal_cutoff = cutoff / nyq  # 归一化截止频率
+        b, a = butter(order, normal_cutoff, btype='low', analog=False)
+        return b, a
+    
+    b, a = butter_lowpass(highcut, fs, order)
+    
+    _, num_antennas, num_subcarriers = csi_data.shape
+    ans_csi = np.zeros_like(csi_data)
+    for ant in range(num_antennas):
+        for sub in range(num_subcarriers):
+            data = csi_data[:, ant, sub]
+            # 应用滤波器
+            filtered_data = filtfilt(b, a, data)
+            ans_csi[:, ant, sub] = filtered_data
+    return ans_csi
+
+def pca_denoise(csi_data, highcut=100, fs=1000, order=5, n_components=0.90):
+    num_packets, num_antennas, num_subcarriers = csi_data.shape
+    # Butterworth filter
+    butter_csi = butter_bandpass_filter(csi_data, highcut=highcut, fs=fs, order=order)
+    # 标准化
+    butter_csi_re = butter_csi.reshape(num_packets, -1)
+    scaler = StandardScaler()
+    scale_csi = scaler.fit_transform(butter_csi_re)
+    # PCA
+    pca = PCA(n_components=n_components)
+    pca_csi = pca.fit_transform(scale_csi)
+    # PCA Inverse
+    csi_pca_inverse = pca.inverse_transform(pca_csi)
+    csi_scale_inverse = scaler.inverse_transform(csi_pca_inverse)
+    csi_scale_inverse = csi_scale_inverse.reshape(num_packets, num_antennas, num_subcarriers)
+    return csi_scale_inverse
+
+
+# 6. Extract DFS From CSI
 def dfs_pca(X, n_components=None, centered=True, algorithm='svd',
         weights=None, variable_weights=None, missing_rows='complete',
         economy=True, tol=1e-6):

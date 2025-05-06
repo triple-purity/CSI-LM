@@ -139,7 +139,6 @@ class LLM2Rec(nn.Module):
             nn.GELU(),
             nn.Dropout(dropout),
         )
-
         self.head_layer = nn.Sequential(
             nn.Linear(self.d_llm, self.d_llm*4),
             nn.GELU(),
@@ -259,6 +258,12 @@ class LLM2Rec(nn.Module):
         if return_feature:
             return_dict['features'] = x_features
         return return_dict
+    
+    def predict(self, x_input):
+        out_dict = self.forward(x_input)
+        logits = out_dict['logits']
+        pred_label = torch.argmax(logits, dim=-1)
+        return logits, pred_label
     
 def build_time_embed(
         input_dim,

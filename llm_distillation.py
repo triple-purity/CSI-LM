@@ -4,7 +4,6 @@ from typing import Optional, List, Tuple
 import numpy as np
 from tqdm.auto import tqdm
 from itertools import chain
-from matplotlib import pyplot as plt
 
 import torch
 import torch.nn as nn
@@ -18,7 +17,7 @@ from dataset.datasets import CSI_Dataset
 from models.LM_Base import build_LLM2Rec
 from models.StuModels import CSINet, TimeModule
 
-from dataset.data import get_csi_data, get_cross_domain_csi_data
+from dataset.data import get_csi_data
 from utils.train_util import InfoCE, KD_loss, feature_loss
 from sklearn.metrics import accuracy_score, precision_score
 
@@ -33,7 +32,6 @@ def get_args_parser():
                         help='the value must be in the [user, gesture, location, direction]')
 
     # data process params
-    parser.add_argument('--cross_domain', default=None, type=str)
     parser.add_argument('--antenna_num', default=3, type=int, help='the number of antenna')
     parser.add_argument('--time_length', default=700, type=int)
     parser.add_argument('--extract_method', default='amplitude', type=str, help='amplitude or csi-ratio or dfs')
@@ -57,18 +55,17 @@ def get_args_parser():
     parser.add_argument('--action_num', default=6, type=int)
     parser.add_argument('--num_encoder', default=4, type=int)
     parser.add_argument('--decoder_mask', default=True, type=bool)
-    parser.add_argument('--pos_learn', default=False, type=bool)
 
     #train model params
     parser.add_argument('--epoch', default=5, type=int)
     parser.add_argument('--batch_size', default=16, type=int)
     parser.add_argument('--noise', default=0., type=float)
-    parser.add_argument('--lr', default=4e-5, type=float)
+    parser.add_argument('--lr', default=2e-5, type=float)
     parser.add_argument('--scheduler', default=True, type=bool)
     parser.add_argument('--weight_deacy', default=0.0, type=float)
     parser.add_argument('--label_smooth_rate', default=0.0, type=float)
-    parser.add_argument('--fea_gama', default=0.1, type=int)
-    parser.add_argument('--contrastive_alpha', default=0.0001, type=float)
+    parser.add_argument('--fea_gama', default=0.01, type=int)
+    parser.add_argument('--contrastive_alpha', default=0.001, type=float)
     parser.add_argument('--kd_beta', default=0.15, type=int)
     args = parser.parse_args()
     return args
@@ -78,7 +75,7 @@ def train_model(teacher_model: nn.Module, student_model: nn.Module, train_data: 
     torch.autograd.set_detect_anomaly(True) 
     # 确定损失函数组成
     cls_loss = nn.CrossEntropyLoss(label_smoothing=args.label_smooth_rate)
-    Avg_Loss, Acc= list(), list()
+    Avg_Loss = list()
 
     for epoch in range(start_epoch, epochs):
         print('*** Start Training Model with Train Data ***')
@@ -92,8 +89,8 @@ def train_model(teacher_model: nn.Module, student_model: nn.Module, train_data: 
         avg_loss, avg_sup_loss_stu, avg_sup_loss_tea, avg_fea_loss, avg_con_loss, avg_kd_loss = 0, 0, 0, 0, 0, 0
         bar = tqdm(enumerate(train_data), total=len(train_data))
         for i,(inputs, action_labels, _) in bar:
+            B, K, T, C = inputs.shape
             if args.extract_method == 'csi-ratio':
-                B, K, T, C = inputs.shape
                 inputs = inputs.reshape(B*K, T, -1)
                 action_labels = action_labels.flatten(0)
             inputs = inputs.to(device)
@@ -130,21 +127,18 @@ def train_model(teacher_model: nn.Module, student_model: nn.Module, train_data: 
             bar.set_description(
                 desc=f"Epoch:{epoch+1}/{epochs}--Loss:{avg_loss:.4f} ||Supervised_Loss_Tea:{avg_sup_loss_tea:.4f} && Supervised_Loss_Stu:{avg_sup_loss_stu:.4f} && Feature_Loss:{avg_fea_loss:.4f} && Contrastive_Loss:{avg_con_loss:.4f} && KD_Loss:{avg_kd_loss:.4f}")
          
+        Avg_Loss.append(avg_loss)
         preds = torch.cat(pred_labels).numpy()
         targets = torch.cat(targets).numpy()
-        stu_train_acc = accuracy_score(targets, preds)
-        print(f"Train Time the Accuracy Score of Model is:{stu_train_acc:.4f}")
+        print(f"Train Time the Accuracy Score of Model is:{accuracy_score(targets, preds):.4f}")
         
         if args.scheduler:
             scheduler.step()
 
         if eval:
             print("*** Start Evaluation with Eval Data ***")
-            eval_avg_loss, eval_acc = eval_model(student_model, eval_data, device, args=args)
-        
-        Avg_Loss.append((avg_sup_loss_stu, eval_avg_loss))
-        Acc.append((stu_train_acc, eval_acc))
-    return Avg_Loss, Acc
+            eval_model(student_model, eval_data, device, args=args)
+    return Avg_Loss
 
 global_eval_acc = 0.80
 def eval_model(model, eval_data, device, args):
@@ -160,33 +154,19 @@ def eval_model(model, eval_data, device, args):
     with torch.no_grad():
         bar = tqdm(enumerate(eval_data), total=len(eval_data))
         for i,(inputs, action_labels, _) in bar:
+            B, K, T, C = inputs.shape
             if args.extract_method == 'csi-ratio':
-                B, K, T, C = inputs.shape
                 inputs = inputs.reshape(B*K, T, -1)
                 action_labels = action_labels.flatten(0)
-
-                inputs = inputs.to(device)
-                action_labels = action_labels.to(device)
+            inputs = inputs.to(device)
+            action_labels = action_labels.to(device)
             
-                action_logits, _ = model.predict(inputs, decoder_mask=args.decoder_mask)
-                eval_loss = loss_fun(action_logits, action_labels)
-                eval_avg_loss = (eval_avg_loss * i + eval_loss.item())/(i+1)
+            action_logits, pre_actions = model.predict(inputs, decoder_mask=args.decoder_mask)
+            eval_loss = loss_fun(action_logits, action_labels)
+            eval_avg_loss = (eval_avg_loss * i + eval_loss.item())/(i+1)
 
-                action_logits = F.softmax(action_logits, dim=-1)
-                action_logits = torch.mean(action_logits.reshape(B, K, -1), dim=1)
-                pre_actions = torch.argmax(action_logits, dim=-1)
-                pred_labels.append(pre_actions.cpu())
-                targets.append(action_labels[::K].cpu())
-            else:
-                inputs = inputs.to(device)
-                action_labels = action_labels.to(device)
-            
-                action_logits, pre_actions = model.predict(inputs, decoder_mask=args.decoder_mask)
-                eval_loss = loss_fun(action_logits, action_labels)
-                eval_avg_loss = (eval_avg_loss * i + eval_loss.item())/(i+1)
-
-                pred_labels.append(pre_actions.cpu())
-                targets.append(action_labels.cpu())
+            pred_labels.append(pre_actions.cpu())
+            targets.append(action_labels.cpu())
 
         preds = torch.cat(pred_labels).numpy()
         targets = torch.cat(targets).numpy()
@@ -196,26 +176,16 @@ def eval_model(model, eval_data, device, args):
         if eval_acc > global_eval_acc:
             global_eval_acc = eval_acc
             torch.save(model.state_dict(), os.path.join(args.output_dir, f'student_model.pth'))
-    return eval_avg_loss, eval_acc
+
 def main():
     args = get_args_parser()
     print(args)
     # 1. load data
     print("***** Start Load Data *****")
-    if args.cross_domain is None:
-        print("*** Load Data not Cross Domain ***")
-        train_datas, train_gesture_labels, train_domain_labels, eval_datas, eval_gesture_labels, eval_domain_labels, = get_csi_data(
-            args.data_path,
-            select_domains = args.data_domains,
-        )
-    else:
-        print("*** Load Data Cross Domain ***")
-        train_datas, train_gesture_labels, train_domain_labels, eval_datas, eval_gesture_labels, eval_domain_labels, = get_cross_domain_csi_data(
-            args.data_path,
-            select_domains = args.data_domains,
-            cross_doamin = args.cross_domain,
-        )
-
+    train_datas, train_gesture_labels, train_domain_labels, eval_datas, eval_gesture_labels, eval_domain_labels, = get_csi_data(
+        args.data_path,
+        select_domains = args.data_domains,
+    )
     select_data = 1
     train_dataset = CSI_Dataset(train_datas[select_data], train_gesture_labels[select_data], 
                                 train_domain_labels[select_data], antenna_num=args.antenna_num, 
@@ -260,7 +230,6 @@ def main():
         embed_size=teacher_model.d_llm,
         n_heads=args.n_heads,
         num_encoder=args.num_encoder,
-        pos_learn=args.pos_learn,
     )
     
     # 4. Optimizer
@@ -274,39 +243,13 @@ def main():
     scheduler = None
     if args.scheduler:
         scheduler = optim.lr_scheduler.CosineAnnealingLR(model_optimizer, T_max= args.epoch, eta_min=5e-6)
-        
+
     # 6. Train
-    avg_loss, acc = train_model(teacher_model, student_model, train_data=train_loader, eval_data=eval_loader, 
-                                start_epoch=0, epochs=args.epoch, optimizer=model_optimizer, scheduler=scheduler, 
-                                device=device, args=args, eval=True)
+    train_model(teacher_model, student_model, train_data=train_loader, eval_data=eval_loader, 
+                start_epoch=0, epochs=args.epoch, optimizer=model_optimizer, scheduler=scheduler, 
+                device=device, args=args, eval=True)
     
-    # 7. display loss and acc
-    train_loss, eval_loss = [i[0] for i in avg_loss], [i[1] for i in avg_loss]
-    train_acc, eval_acc = [i[0] for i in acc], [i[1] for i in acc]
-
-    # 绘制损失曲线
-    plt.figure(figsize=(12, 6))
-
-    plt.subplot(1, 2, 1)
-    plt.plot(train_loss, label='Train Loss')
-    plt.plot(eval_loss, label='Validation Loss')
-    plt.title('Loss over Epochs')
-    plt.xlabel('Epochs')
-    plt.ylabel('Loss')
-    plt.legend()
-
-    # 绘制准确率曲线
-    plt.subplot(1, 2, 2)
-    plt.plot(train_acc, label='Train Accuracy')
-    plt.plot(eval_acc, label='Validation Accuracy')
-    plt.title('Accuracy over Epochs')
-    plt.xlabel('Epochs')
-    plt.ylabel('Accuracy')
-    plt.legend()
-
-    plt.tight_layout()
-    plt.savefig(os.path.join('../../data/photos', 'llm_dis_stu_loss_acc.png'))
-    plt.show()
+    
 if __name__ == '__main__':
     main()
 
