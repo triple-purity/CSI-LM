@@ -107,7 +107,7 @@ def train_model(teacher_model: nn.Module, student_model: nn.Module, train_data: 
             sup_loss_stu = cls_loss(stu_logits, action_labels)
             sup_loss_tea = cls_loss(tea_logits, action_labels)
             fea_loss = feature_loss(stu_features, tea_features)
-            con_loss = InfoCE(stu_features, action_labels)    # 对比损失，拉近相同标签的样本
+            con_loss = InfoCE(torch.mean(stu_features[-1], dim=1), action_labels)    # 对比损失，拉近相同标签的样本
             kd_loss = KD_loss(tea_logits, stu_logits)
             loss = (1-args.kd_beta)*sup_loss_stu + args.kd_beta * kd_loss + sup_loss_tea + args.fea_gama*fea_loss + args.contrastive_alpha * con_loss
 

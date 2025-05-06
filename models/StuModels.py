@@ -91,7 +91,8 @@ class TimeModule(nn.Module):
                 x, 
                 decoder_mask = False, 
                 return_embed = False, 
-                return_feature = False
+                return_feature = False,
+                device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
             ):
 
         x_embed = self.time_embed(x)
@@ -105,12 +106,12 @@ class TimeModule(nn.Module):
         for layer in self.layers:
             if isinstance(layer, EncoderLayer):
                 if decoder_mask:
-                    mask = torch.tril(torch.ones(x_input.shape[1], x_input.shape[1])).cuda()
+                    mask = torch.tril(torch.ones(x_input.shape[1], x_input.shape[1])).to(device)
                 x_input = layer(x_input, mask)
-                hidden_feas.append(x_input[:,:-1])
+                hidden_feas.append(self.feature_head(x_input[:,:-1]))
             else:
                 x_input = layer(x_input)
-                hidden_feas.append(x_input[:,1:])
+                hidden_feas.append(self.feature_head(x_input[:,1:]))
         x_input = self.norm_layer(x_input)
         
         if decoder_mask:

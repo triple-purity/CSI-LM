@@ -249,7 +249,7 @@ class LLM2Rec(nn.Module):
         # 3. LLM Interaction
         llm_output = self.llm_model(inputs_embeds=x_input, output_hidden_states=True)
         x_output = llm_output.last_hidden_state
-        x_features = [fea[:,:-1] for fea in llm_output.hidden_states[1:]]
+        x_features = [self.feature_head(fea[:,:-1]) for fea in llm_output.hidden_states[1:]]
         x_cls_fea = x_output[:,-1]
 
         # 4. logits
