@@ -4,13 +4,15 @@ from typing import Optional, Tuple, List
 import scipy as sp
 import scipy.io as sio
 import numpy as np
+import random
 
 import torch
 from torch.utils.data import Dataset
 import torch.nn.functional as F
 
-from utils.preprocess_tools import calculate_csi_ratio, hampel_filter, phase_calibration, DWT_Denoise, get_doppler_spectrum, resample_csi_sequence
+from utils.preprocess_tools import calculate_csi_ratio, hampel_filter, phase_calibration, DWT_Denoise, pca_denoise, get_doppler_spectrum, resample_csi_sequence
 
+random.seed(42)
 def data_norm(x: torch.Tensor, norm_type: str = "min_max_1"):
     '''
     param x: torch.Tensor, shape (T, C)
@@ -18,8 +20,8 @@ def data_norm(x: torch.Tensor, norm_type: str = "min_max_1"):
     return normed_x: torch.Tensor, shape (T, C)
     '''
     if norm_type == "min_max_2":
-        min_x = x.min()
-        max_x = x.max()
+        min_x = x.min(dim=-1, keepdim=True).values
+        max_x = x.max(dim=-1, keepdim=True).values
         return (x-min_x)*2/(max_x-min_x)-1
     elif norm_type == "mean_std":
         mean_x = x.mean(dim=0, keepdim=True)
@@ -31,6 +33,17 @@ def data_norm(x: torch.Tensor, norm_type: str = "min_max_1"):
         return (x-min_x)/(max_x-min_x)
     else:
         raise ValueError("Invalid norm type: {}".format(norm_type))
+
+def enhance_csi_ratio(csi_ratio):
+    new_csi_ratio = csi_ratio.clone()
+    s = random.randint(0,100)
+    if s%3 == 0:
+        new_csi_ratio = -new_csi_ratio
+    elif s%3 == 1:
+        new_csi_ratio = torch.flip(new_csi_ratio, dims=[1])
+    else:
+        new_csi_ratio = -torch.flip(new_csi_ratio, dims=[1])
+    return new_csi_ratio
 
 class HAR_Dataset(Dataset):
     def __init__(self, data_path:str, time_length:int=2000, norm_type: str='min_max_1'):
@@ -90,6 +103,8 @@ class CSI_Dataset(Dataset):
                  extract_method: str = 'amplitude',
                  data_key: str = 'csi_data', 
                  norm_type: str='min_max_1',
+                 noise: float = 0.0,
+                 train: bool = True,
                 ):
         """
         Initialize dataset.
@@ -98,6 +113,7 @@ class CSI_Dataset(Dataset):
             data_path (str): path to the dataset.
             transform (callable, optional): Optional transform to be applied on a sample.
             extract_method (str): method to extract information from CSI data, must be in in ['amplitude', 'csi-ratio', 'dfs']
+            data_key (str): key to extract CSI data from the mat file, default is 'csi_data', other in ['csi-ratio', 'dfs']
         """
         assert extract_method in ['amplitude', 'csi-ratio', 'dfs'], "Invalid extract method: {}".format(extract_method)
 
@@ -109,6 +125,8 @@ class CSI_Dataset(Dataset):
         self.extract_method = extract_method
         self.data_key = data_key
         self.norm_type = norm_type
+        self.noise_std = noise
+        self.train = train
     def __len__(self):
         return len(self.data_files)
     
@@ -120,20 +138,28 @@ class CSI_Dataset(Dataset):
         domain_label = int(self.domain_labels[idx])
         data_file = self.data_files[idx]
         try:
-            origin_csi = sio.loadmat(data_file)
-            origin_csi = origin_csi[self.data_key]
-            if len(origin_csi.shape) ==2 and self.extract_method != 'dfs':
-                origin_csi = origin_csi.reshape(origin_csi.shape[0], self.antenna_num, -1)
+            origin_data = sio.loadmat(data_file)
+            origin_data = origin_data[self.data_key]
+            if len(origin_data.shape) ==2:
+                if self.extract_method != 'dfs':
+                    origin_data = origin_data.reshape(origin_data.shape[0], self.antenna_num, -1)
+                """
+                else:
+                    origin_data = np.transpose(origin_data, axes=(1, 0))
+                    origin_data = origin_data.reshape(origin_data.shape[0], self.antenna_num, -1)
+                """
         except FileNotFoundError:
             print("File not found: {}".format(data_file))
         
         # Extrac Information from CSI Data
         if self.extract_method == 'amplitude':
-            abs_csi = np.abs(origin_csi)
-            denoised_csi = DWT_Denoise(abs_csi, level=5, wavelet='sym8')
+            abs_csi = np.abs(origin_data)
+            # denoised_csi = DWT_Denoise(abs_csi, level=5, wavelet='db3')
+            denoised_csi = pca_denoise(abs_csi)
             resample_csi = resample_csi_sequence(denoised_csi, target_length=self.unified_length)
             resample_csi = resample_csi.reshape(resample_csi.shape[0], -1)
             tensor_csi = torch.tensor(resample_csi, dtype=torch.float32)
+            tensor_csi = tensor_csi + torch.randn_like(tensor_csi) * self.noise_std
             tensor_csi = data_norm(tensor_csi, self.norm_type)
             return tensor_csi, gestur_label, domain_label
         elif self.extract_method == 'csi-ratio':
@@ -143,75 +169,40 @@ class CSI_Dataset(Dataset):
             angle_csi_ratio = np.angle(csi_ratio)
             angle_csi_ratio = phase_calibration(hampel_filter(angle_csi_ratio))"
             """
-            dwt_angle_csi = DWT_Denoise(origin_csi)
-            resample_csi = resample_csi_sequence(dwt_angle_csi, target_length=self.unified_length)
-            resample_csi = resample_csi.reshape(resample_csi.shape[0], -1)
-            tensor_csi = torch.tensor(resample_csi, dtype=torch.float32)
-            tensor_csi = data_norm(tensor_csi, self.norm_type)
-            return tensor_csi, gestur_label, domain_label
+            csi_ratio = origin_data
+            resample_csi_ratio = resample_csi_sequence(csi_ratio, target_length=self.unified_length)
+            resample_csi_ratio = resample_csi_ratio.reshape(resample_csi_ratio.shape[0], -1)
+            tensor_csi_ratio = torch.tensor(resample_csi_ratio, dtype=torch.float32)
+            tensor_csi_ratio = data_norm(tensor_csi_ratio, self.norm_type)
+            
+            tensor_csi_ratio = tensor_csi_ratio.reshape(self.unified_length, 2, -1)
+            tensor_csi_ratio = tensor_csi_ratio.permute(1, 0, 2)
+            if self.train:
+                enh_csi_ratio = enhance_csi_ratio(tensor_csi_ratio)
+                tensor_csi_ratio_all = torch.cat([enh_csi_ratio, tensor_csi_ratio], dim=0)
+                gestur_label = torch.tensor([gestur_label]*4, dtype=torch.long)
+                domain_label = torch.tensor([domain_label]*4, dtype=torch.long)
+            else:
+                tensor_csi_ratio_all = tensor_csi_ratio
+                gestur_label = torch.tensor([gestur_label]*2, dtype=torch.long)
+                domain_label = torch.tensor([domain_label]*2, dtype=torch.long)
+            return tensor_csi_ratio_all, gestur_label, domain_label
         else:
             # extract doppler spectrum from csi data
             # resample_csi = resample_csi_sequence(origin_csi, target_length=self.unified_length)
             # doppler_spectrum, *_ = get_doppler_spectrum(origin_csi)
-            doppler_spectrum = origin_csi
+            doppler_spectrum = origin_data
+            
             _, sample_index = doppler_spectrum.shape
             if sample_index >= self.unified_length:
                 doppler_spectrum = doppler_spectrum[:, :self.unified_length]
             else:
                 doppler_spectrum = np.concatenate([doppler_spectrum, np.zeros((doppler_spectrum.shape[0], self.unified_length-sample_index))], axis=1)
+            '''
+            resample_doppler_spectrum = resample_csi_sequence(doppler_spectrum, target_length=self.unified_length)
+            resample_doppler_spectrum = resample_doppler_spectrum.reshape(resample_doppler_spectrum.shape[0], -1)
+            '''
             tensor_dfs = torch.tensor(doppler_spectrum, dtype=torch.float32)
             tensor_dfs = tensor_dfs.permute(1, 0)
+            tensor_dfs = tensor_dfs + torch.randn_like(tensor_dfs)*self.noise_std
             return tensor_dfs, gestur_label, domain_label
-
-
-class DFS_Dataset(Dataset):
-    def __init__(self, 
-                 data_path: str, 
-                 data_names:List[str], 
-                 labels: List[str], 
-                 mat_key:str = 'doppler_spectrum_r',
-                 receiver_num: int = 1,
-                 time_length: int = 2000, 
-                 norm_type: str='min_max_1',
-                ):
-        
-        self.data_path = data_path
-        self.data_names = [os.path.join(data_path, name) for name in data_names]
-        self.labels = labels
-        self.mat_key = mat_key
-        self.receiver_num = receiver_num
-        self.time_length = time_length
-        self.norm_type = norm_type
-
-    def __len__(self): 
-        return len(self.data_names)
-    
-    def __getitem__(self, idx: int) -> Tuple[torch.Tensor, int]:
-        cur_label = int(self.labels[idx])-1
-        data_file = self.data_names[idx]
-        try:
-            mat_file = sio.loadmat(data_file)
-        except FileNotFoundError:
-            print("File not found: {}".format(data_file))
-        
-        dfs_mat = mat_file[self.mat_key]
-        dfs_re = dfs_mat[self.receiver_num,:,:]
-        # transform to tensor
-        tensor_dfs = torch.tensor(dfs_re, dtype=torch.float32)
-        tensor_dfs = tensor_dfs.permute(1, 0)   # (freq_bin, time_len) -> (time_len, freq_bin)
-        tensor_dfs = self.data_process(tensor_dfs)
-
-        # normalize :
-        tensor_dfs = data_norm(tensor_dfs, self.norm_type)
-        return tensor_dfs, cur_label
-    
-    def data_process(self,tensor_dfs):
-        time_len, dim =tensor_dfs.shape
-        if time_len > self.time_length:
-            tensor_dfs =tensor_dfs[:self.time_length]
-        elif time_len < self.time_length:
-            copy_dfs= torch.zeros(self.time_length-time_len, dim)
-            tensor_dfs = torch.cat([tensor_dfs, copy_dfs], dim=0)
-        else:
-            pass
-        return tensor_dfs

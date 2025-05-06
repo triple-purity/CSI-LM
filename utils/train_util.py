@@ -48,4 +48,18 @@ def KD_loss(teacher_logits: torch.tensor, student_logits: torch.tensor, T=1, eps
     loss = -torch.mean(torch.sum(teacher_logits * torch.log(student_logits), dim=-1))
     return loss
 
+# 4. Feature Distillation Loss
+def feature_loss(teacher_features, student_features, device):
+    """
+    parameters:
+        teacher_features: [tea_trans_layers, batch_size, seq_len, feature_dim]
+        student_features: [stu_trans_layers, batch_size, seq_len, feature_dim]
+    """
+    # L2 loss
+    tea_trans_layers, stu_trans_layers = len(tea_trans_layers), len(stu_trans_layers)
+    ratio = tea_trans_layers // stu_trans_layers
+    loss = torch.tensor(0., device=device)
+    for i, stu_fea in enumerate(student_features):
+        loss += F.mse_loss(teacher_features[(i+1)*ratio-1]-stu_fea)
+    return loss
     

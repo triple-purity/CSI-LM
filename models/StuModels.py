@@ -40,31 +40,44 @@ class TimeModule(nn.Module):
                  class_num,
                  input_dim,
                  token_kernels,
-                 llm_name, 
+                 llm_name,
+                 d_model, 
                  embed_size, 
                  n_heads, 
                  head_dim=None, 
                  num_encoder=4, 
-                 dropout=0.1
+                 dropout=0.1,
+                 pos_learn=False,
                 ):
         super(TimeModule, self).__init__()
 
         self.time_embed = TimeEmbedding(
             input_dim = input_dim,
             token_kernels = token_kernels,
-            d_model = embed_size,
+            d_model = d_model,
             d_llm = embed_size,
             n_heads=n_heads,
             llm_name = llm_name,   
         )
 
-        self.position_embed = PositionalEmbedding(embed_size)
+        self.position_embed = PositionalEmbedding(embed_size, learnable=pos_learn)
         self.cls_token = nn.Parameter(torch.zeros(1, 1, embed_size), requires_grad=True)
 
         self.layers = nn.ModuleList()
         for i in range(num_encoder):
             self.layers.append(EncoderLayer(embed_size, n_heads, head_dim, dropout))
 
+        self.norm_layer = nn.LayerNorm(embed_size)
+
+        # head layer
+        self.feature_head = nn.Sequential(
+            nn.Linear(embed_size, embed_size*4),
+            nn.GELU(),
+            nn.Dropout(dropout),
+            nn.Linear(embed_size*4, embed_size),
+            nn.GELU(),
+            nn.Dropout(dropout),
+        )
         self.head_layer = nn.Sequential(
             nn.Linear(embed_size, embed_size*4),
             nn.GELU(),
@@ -77,35 +90,44 @@ class TimeModule(nn.Module):
     def forward(self, 
                 x, 
                 decoder_mask = False, 
-                mask = None, 
                 return_embed = False, 
                 return_feature = False
             ):
-        if decoder_mask and mask is not None:
-            ValueError("mask should be provided when decoder_mask is False")
 
         x_embed = self.time_embed(x)
-        x_input = torch.cat((self.cls_token.expand(x_embed.shape[0], 1, -1), x_embed), dim=1)
+        if decoder_mask:
+            x_input = torch.cat((x_embed, self.cls_token.expand(x_embed.shape[0], 1, -1)), dim=1)
+        else:
+            x_input = torch.cat((self.cls_token.expand(x_embed.shape[0], 1, -1), x_embed), dim=1)
         x_input = self.position_embed(x_input)
+
+        hidden_feas = []
         for layer in self.layers:
             if isinstance(layer, EncoderLayer):
-                if decoder_mask and mask is None:
-                    mask = torch.tril(torch.ones(x_input.shape[1], x_input.shape[1]))
+                if decoder_mask:
+                    mask = torch.tril(torch.ones(x_input.shape[1], x_input.shape[1])).cuda()
                 x_input = layer(x_input, mask)
+                hidden_feas.append(x_input[:,:-1])
             else:
                 x_input = layer(x_input)
-        x_input = x_input[:, 0, :]
-        x_logits = self.head_layer(x_input) 
+                hidden_feas.append(x_input[:,1:])
+        x_input = self.norm_layer(x_input)
+        
+        if decoder_mask:
+            x_cls_fea = x_input[:,-1,:]
+        else:
+            x_cls_fea = x_input[:, 0, :]
+        x_logits = self.head_layer(x_cls_fea) 
 
         return_dict = {'logits': x_logits} 
         if return_embed:
             return_dict['embeds'] = x_embed
         if return_feature:
-            return_dict['features'] = x_input
+            return_dict['features'] = hidden_feas
         return return_dict
     
-    def predict(self, x, mask=None):
-        return_dict = self.forward(x, mask=mask)
+    def predict(self, x, decoder_mask=False):
+        return_dict = self.forward(x, decoder_mask=decoder_mask)
         action_logits = return_dict['logits']
         pre_labels = torch.argmax(action_logits, dim=-1)
         return action_logits, pre_labels

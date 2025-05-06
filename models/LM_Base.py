@@ -131,6 +131,15 @@ class LLM2Rec(nn.Module):
             self.reprogramming_layer = ReprogrammingLayer(self.d_llm, self.n_heads, self.d_llm)
 
         # 5. classification head
+        self.feature_head = nn.Sequential(
+            nn.Linear(self.d_llm, self.d_llm*4),
+            nn.GELU(),
+            nn.Dropout(dropout),
+            nn.Linear(self.d_llm*4, self.d_llm),
+            nn.GELU(),
+            nn.Dropout(dropout),
+        )
+
         self.head_layer = nn.Sequential(
             nn.Linear(self.d_llm, self.d_llm*4),
             nn.GELU(),
@@ -139,6 +148,7 @@ class LLM2Rec(nn.Module):
             nn.GELU(),
             nn.Dropout(dropout),
             nn.Linear(self.d_llm, class_num),
+            nn.Dropout(dropout),
         )
     def load_LLM(self):
         assert self.llm_name in llama_names or self.llm_name in gpt_names, f"LLM model {self.llm_name} is not defined"
@@ -236,17 +246,18 @@ class LLM2Rec(nn.Module):
 
         x_input = x if x_text_embed is None else x_text_embed
         x_input = torch.cat((x_input , self.cls_token.expand(B, 1, -1)), dim=1)
-        # x_input = self.position_embed(x_input) 
 
         # 3. LLM Interaction
-        x_output = self.llm_model(inputs_embeds=x_input).last_hidden_state
-        x_output = x_output[:,-1]
+        llm_output = self.llm_model(inputs_embeds=x_input, output_hidden_states=True)
+        x_output = llm_output.last_hidden_state
+        x_features = [fea[:,:-1] for fea in llm_output.hidden_states[1:]]
+        x_cls_fea = x_output[:,-1]
 
         # 4. logits
-        x_logits = self.head_layer(x_output)
+        x_logits = self.head_layer(x_cls_fea)
         return_dict = {'logits': x_logits}
         if return_feature:
-            return_dict['features'] = x_output
+            return_dict['features'] = x_features
         return return_dict
     
 def build_time_embed(
