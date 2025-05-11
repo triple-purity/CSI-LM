@@ -73,6 +73,7 @@ class LLM2Rec(nn.Module):
                  d_model,
                  input_dim = 90,
                  token_kernels=[5, 11, 21],
+                 time_stride = 4,
                  n_heads = 8,
                  llm_layers=12,
                  frozen_llm_layer=8,
@@ -114,6 +115,7 @@ class LLM2Rec(nn.Module):
                 d_llm = self.d_llm, 
                 n_heads=self.n_heads,
                 llm_name = llm_name,
+                time_stride = time_stride,
                 dropout = dropout,    
             )
         self.position_embed = PositionalEmbedding(self.d_llm)  # 应该是可训练的

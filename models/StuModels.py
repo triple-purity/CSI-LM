@@ -40,6 +40,7 @@ class TimeModule(nn.Module):
                  class_num,
                  input_dim,
                  token_kernels,
+                 time_stride,
                  llm_name,
                  d_model, 
                  embed_size, 
@@ -57,7 +58,8 @@ class TimeModule(nn.Module):
             d_model = d_model,
             d_llm = embed_size,
             n_heads=n_heads,
-            llm_name = llm_name,   
+            llm_name = llm_name,
+            time_stride=time_stride,   
         )
 
         self.position_embed = PositionalEmbedding(embed_size, learnable=pos_learn)

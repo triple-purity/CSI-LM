@@ -16,7 +16,7 @@ class PositionalEmbedding(nn.Module):
         pe = torch.zeros(max_len, c_out).float()
         if learnable:
             pe = nn.Parameter(pe, requires_grad=True)
-            nn.init.uniform_(pe, -0.1, 0.1)
+            nn.init.normal_(pe, std=0.2)
         else:
             pe.require_grad = False
             position = torch.arange(0, max_len).float().unsqueeze(1)
@@ -85,7 +85,7 @@ class PatchEmbedding(nn.Module):
     
 # 4. Time Series Embedding
 class TimeEmbedding(nn.Module):
-    def __init__(self, input_dim, token_kernels, d_model, d_llm, n_heads, llm_name, dropout=0.1):
+    def __init__(self, input_dim, token_kernels, d_model, d_llm, n_heads, llm_name, time_stride=4, dropout=0.1):
         super(TimeEmbedding, self).__init__()
 
         self.input_dim = input_dim
@@ -93,6 +93,7 @@ class TimeEmbedding(nn.Module):
         self.d_model = d_model
         self.d_llm = d_llm
         self.n_heads = n_heads
+        self.time_stride = time_stride
 
         # token_embedding is used for [B,T,C]
         # Multi Scale CNN + TokenEmbedding 
@@ -106,7 +107,7 @@ class TimeEmbedding(nn.Module):
             nn.Dropout(dropout),
             RMSNorm(self.d_model) if llm_name in llama_names else nn.LayerNorm(self.d_model) 
         )
-        self.token_embed = TokenEmbedding(self.d_model, self.d_llm, kernel=9, stride=4, padding=4)
+        self.token_embed = TokenEmbedding(self.d_model, self.d_llm, kernel=time_stride*2+1, stride=time_stride, padding=time_stride)
         self.atten_embed = MultiHeadAttention(self.d_llm, self.n_heads, dropout=dropout)
     
     def forward(self, x):
@@ -117,5 +118,5 @@ class TimeEmbedding(nn.Module):
         x_cat = torch.cat(conv_x, dim=-1)
         x_cat = self.token_linear(x_cat)
         x_cat = self.token_embed(x_cat)
-        x_cat = self.atten_embed(x_cat)
+        # x_cat = self.atten_embed(x_cat)
         return x_cat
