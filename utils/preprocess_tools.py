@@ -498,7 +498,7 @@ def tfrsp(x, t=None, N=None, h=None, trace=0):
         print("Note: For faster computation, N should be a power of two")
     
     tcol = len(t)
-    tfr = np.zeros((N, tcol), dtype=np.complex_)
+    tfr = np.zeros((N, tcol), dtype=np.complex128)
     
     for icol in range(tcol):
         ti = t[icol]
